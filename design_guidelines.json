@@ -1,0 +1,131 @@
+{
+  "project_name": "Ambiance Analytics - Multi-Marketplace Seller Dashboard",
+  "theme_and_archetype": {
+    "theme": "Light",
+    "archetype": "Archetype 4 (Swiss & High-Contrast)",
+    "rationale": "For a formal, data-dense e-commerce analytics dashboard inspired by Seller Legend, clarity and authority are paramount. The Swiss & High-Contrast approach ensures metrics are the hero, using structural grayscale for hierarchy and strict grid alignment to manage high data density without feeling cluttered."
+  },
+  "typography": {
+    "strategy": "The 'Swiss Brutalist' (Tech/Art) - clear, objective, high legibility for data.",
+    "fonts": {
+      "headings": "Cabinet Grotesk",
+      "body_and_data": "IBM Plex Sans",
+      "import_instructions": "Import both fonts via Google Fonts or Fontshare."
+    },
+    "hierarchy": {
+      "h1": "text-4xl lg:text-5xl font-bold tracking-tight text-slate-900",
+      "h2": "text-2xl lg:text-3xl font-semibold tracking-tight text-slate-900",
+      "h3": "text-xl font-medium tracking-tight text-slate-800",
+      "h4": "text-sm uppercase tracking-[0.2em] font-semibold text-slate-500",
+      "body": "text-sm text-slate-700 leading-relaxed",
+      "metric_large": "text-4xl font-light tracking-tighter text-slate-900",
+      "metric_sub": "text-sm font-medium"
+    }
+  },
+  "colors": {
+    "background": {
+      "app": "bg-[#F7F7F8]",
+      "surface": "bg-white",
+      "sidebar": "bg-[#111215]"
+    },
+    "text": {
+      "primary": "text-[#111215]",
+      "secondary": "text-[#5E636E]",
+      "inverse": "text-white"
+    },
+    "accents": {
+      "primary": "bg-[#0055FF] text-white",
+      "primary_hover": "bg-[#0044CC] text-white",
+      "positive": "text-[#00A859] bg-[#E5F6EE]",
+      "negative": "text-[#FF2A2A] bg-[#FFEAEA]",
+      "warning": "text-[#FF9900] bg-[#FFF5E5]"
+    },
+    "borders": {
+      "default": "border-[#E5E7EB]",
+      "dark": "border-[#2D313A]"
+    }
+  },
+  "spacing_and_layout": {
+    "strategy": "The 'Control Room' Grid",
+    "container": "max-w-[1600px] mx-auto px-4 md:px-8",
+    "grid_gap": "gap-1 md:gap-4",
+    "widget_padding": "p-6 md:p-8",
+    "patterns": {
+      "kpi_row": "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6",
+      "main_chart": "col-span-1 lg:col-span-3",
+      "side_panel": "col-span-1 lg:col-span-1"
+    }
+  },
+  "surface_styles": {
+    "strategy": "Grid Borders (The 'Technical' Look)",
+    "rules": [
+      "Avoid floating cards with heavy drop shadows (no 'Vercel' look).",
+      "Use crisp 1px borders (border-[#E5E7EB]) with sharp corners (rounded-none or max rounded-sm).",
+      "Widgets sit flush with each other or with tight gaps, forming a continuous dashboard grid.",
+      "Hover states on rows/items should use subtle background color shifts (hover:bg-slate-50) rather than lifting with shadows."
+    ]
+  },
+  "components": {
+    "buttons": {
+      "primary": "rounded-none bg-[#0055FF] hover:bg-[#0044CC] text-white px-6 py-2.5 text-sm font-medium transition-colors",
+      "secondary": "rounded-none border border-[#E5E7EB] bg-white hover:bg-slate-50 text-slate-900 px-6 py-2.5 text-sm font-medium transition-colors"
+    },
+    "inputs": {
+      "default": "rounded-none border border-[#E5E7EB] bg-white px-4 py-2 text-sm text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0055FF] focus:border-[#0055FF]"
+    },
+    "tables": {
+      "style": "Dense, crisp, border-collapse. Headers are text-xs uppercase tracking-wider text-slate-500 border-b border-[#E5E7EB] bg-slate-50/50. Rows have 1px bottom border. Hover state on rows: bg-slate-50."
+    },
+    "charts": {
+      "library": "Recharts",
+      "style": "Minimal axes, solid grid lines (very light gray), no rounded bars. Tooltips must be square, white background, 1px border, no shadow."
+    }
+  },
+  "icons_and_assets": {
+    "library": "@phosphor-icons/react",
+    "style": "Weight: 'regular' for navigation, 'bold' for active states or tiny indicators. For extreme density, consider 'fill' for micro-charts."
+  },
+  "motion": {
+    "transitions": "Fast and crisp. Use duration-150 ease-out for hovers.",
+    "loading": "Use skeleton loaders matching the exact geometry of the unloaded widget, avoiding generic spinners."
+  },
+  "images": {
+    "login_background": {
+      "url": "https://images.pexels.com/photos/577210/pexels-photo-577210.jpeg",
+      "description": "Sleek laptop showcasing data analytics and graphs on the screen in a bright room."
+    },
+    "brand_context": {
+      "url": "https://images.unsplash.com/photo-1560635921-171138a3955e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwzfHxhbWJpYW5jZSUyMHdhbGwlMjBzdGlja2VyJTIwdmlueWwlMjBkZWNhbCUyMGludGVyaW9yfGVufDB8fHx8MTc4MjE3NzcyNHww&ixlib=rb-4.1.0&q=85",
+      "description": "Interior ambiance setting showcasing context for wall sticker products."
+    }
+  },
+  "accessibility_and_testing": {
+    "contrast": "Ensure minimum 4.5:1 for standard text (e.g., text-slate-500 on bg-white might need text-slate-600).",
+    "data_testid_rules": "ALL interactive elements (buttons, nav links, filters, table rows, file upload zones) MUST have a data-testid attribute formatted as kebab-case, role-based. e.g., 'login-submit-button', 'dashboard-nav-link', 'date-filter-select', 'upload-dropzone', 'export-csv-button'."
+  },
+  "page_structures": {
+    "Login": {
+      "layout": "Split screen. Left: Branding and Login Form (centered in container, dense inputs). Right: Featured Image (login_background) with black/10 overlay."
+    },
+    "Aggregate_Dashboard": {
+      "layout": "Top sticky header (Filters: Date, Currency toggle). F-pattern KPI row (Revenue, Orders, AOV, Margin %). Main body: large Recharts line chart (Sales Trend), Side panel: Donut chart (Marketplace breakdown). Bottom: Heat map calendar (Daily sales)."
+    },
+    "Marketplace_Breakdown": {
+      "layout": "Tabs for different marketplaces (Amazon, Bol, Kaufland). Grid of comparative metrics and top selling SKUs."
+    },
+    "Profit_Loss_Reporting": {
+      "layout": "Financial ledger style. Heavily table-driven with indented rows (Revenue -> COGS -> Amazon Fees -> Shipping -> Net Profit). High contrast positive/negative values."
+    },
+    "File_Upload": {
+      "layout": "Central dashboard widget for drag-and-drop. Distinct zones for 'Orders CSV' and 'Cost of Production (SKU) XLSX'. Include upload progress indicators and success/error lists."
+    }
+  },
+  "instructions_to_main_agent": [
+    "Do NOT use standard rounded Vercel-like cards. Enforce the Grid Borders technical surface strategy (sharp corners, 1px border, no shadow).",
+    "Implement Shadcn components but override their border-radius and shadow utilities globally or per-component.",
+    "Use Recharts for the Analytics visuals. Include a Heat Map visualization specifically (using grids or specialized chart).",
+    "Data density is key. Use tight line heights for numbers and utilize the IBM Plex Sans font for tabular numbers.",
+    "Implement file upload UI using react-dropzone or standard input elements customized heavily.",
+    "Strictly apply data-testid on all elements."
+  ]
+}
