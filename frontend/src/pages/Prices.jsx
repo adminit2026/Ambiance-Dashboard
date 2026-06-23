@@ -94,7 +94,7 @@ export default function Prices() {
               {!loading && filtered.length === 0 && (
                 <tr><td colSpan={data.marketplaces.length + 2} className="text-center py-12 text-[#5E636E]">No SKUs match. Adjust filters or search.</td></tr>
               )}
-              {filtered.map((it) => (
+              {!loading && filtered.map((it) => (
                 <tr key={it.sku} data-testid={`price-row-${it.sku}`}>
                   <td className="font-mono-num font-medium sticky left-0 bg-white z-10">{it.sku}</td>
                   <td className="max-w-[320px] truncate text-[#5E636E]" title={it.product_name}>{it.product_name || "—"}</td>

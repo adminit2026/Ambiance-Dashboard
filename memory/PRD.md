@@ -1,59 +1,51 @@
 # Ambiance Analytics Hub — PRD
 
 ## Original Problem Statement
-Build a multi-marketplace seller analytics website (like Seller Legend, but for all marketplaces where Ambiance Sticker is sold). Features: login, sales overview per marketplace, pricing per marketplace, shipping prices, daily/monthly/YTD sales per marketplace, Analytics Dashboard, P&L Reporting, Product Performance, Customer Analytics, Sales Heat Maps, Aggregate Dashboard, Orders & Settlements. Upload CSV/XLSX from each marketplace to update data, separately upload Cost of Production per SKU to compute revenue & margin. Filter and download data.
+Multi-marketplace seller analytics dashboard (Seller Legend style) for Ambiance Sticker. Login, sales overview, daily/monthly/YTD per marketplace, Analytics Dashboard, P&L, Product Performance, Customer Analytics, Sales Heat Maps, Aggregate Dashboard, Orders & Settlements. Upload CSV/XLSX from each marketplace and Cost of Production per SKU. Filter, download, multi-currency (EUR primary), persistent historical data.
 
-## User Decisions (verbatim choices)
-- Auth: Simple JWT login (single seller account).
-- Marketplaces: Open / extensible — user wants to add more in future.
-- Currency: Multi-currency support, primary EUR.
-- Cost template: Simple per-SKU schema (sku, cost_per_unit, shipping_cost, optional product_name/currency).
-- Data: Persistent historical data (deduplication by order_id + sku line key).
+## Canonical Marketplaces (locked in)
+CDiscount, Maison, Leroy Merlin, Mano Mano (was MONECHELLE), PinkConnect Veepee - FR/BE/NL, Castorama, Maxeda - NL/BE, BOL.COM, Zooplus, Kaufland, Appros, Amazon Vendor, Ambiance Web (auto-groups payment-method values: Paiement par carte bancaire et PayPal, Carte Bancaire, Kredietkaart, Credit Card, Tarjeta de Credito).
 
-## Architecture
-- **Backend**: FastAPI + MongoDB (motor), all routes under `/api`.
-  - JWT auth (12h tokens), bcrypt password hashing, admin seeded from `.env`.
-  - Multipart upload endpoints parse ChannelEngine CSV, BeezUP XLSX, Amazon Vendor PO XLS/XLSX, and a simple cost template.
-  - Aggregation endpoints return KPI summary, trend, marketplace breakdown, top SKUs, customers, heatmap, P&L, orders list, CSV export.
-  - Configurable exchange rates (settings collection) drive EUR normalization across all metrics.
-- **Frontend**: React 19 + Tailwind + Recharts + Sonner toast + custom Swiss/high-contrast design (Cabinet Grotesk + IBM Plex Sans).
-  - Sidebar (dark) + main area (light) layout.
-  - Pages: Login, Aggregate Dashboard, Marketplaces, Products, Customers, Profit & Loss, Orders, Heat Map, Uploads, Settings.
-  - Filters bar (date range, marketplaces toggle pills, SKU contains) applies app-wide.
+## Implemented (2026-06-23)
 
-## Implemented (2026-06-23 — MVP)
-- JWT auth, admin seeded (`admin@ambiancesticker.com` / `Ambiance2026!`).
-- Parsers for ChannelEngine, BeezUP, Amazon Vendor PO (auto-detect by columns).
-- Cost upload (CSV / XLSX) + manual cost entry + cost catalog (CRUD).
-- Aggregate dashboard with KPIs, sales-by-day line chart, marketplace donut, units/AOV bar charts.
-- Marketplace tabs with monthly comparison and revenue ranking.
-- Product performance table with COGS/margin where cost is known.
-- Customer analytics by country.
-- Profit & Loss ledger per marketplace (Revenue − COGS − Shipping = Net) with totals.
-- Orders table with pagination + CSV export.
-- Calendar heat map (daily revenue intensity).
-- Settings: editable multi-currency exchange rates (recomputes all order EUR amounts), per-SKU manual cost entry, cost catalog with delete.
-- Uploads page with auto-detect dropzones, source override dropdown, history table, downloadable cost template.
+### MVP (iteration 1)
+- JWT auth, admin seeded.
+- Parsers for ChannelEngine, BeezUP, Amazon Vendor PO (auto-detect).
+- Cost upload (CSV/XLSX) + manual cost entry + cost catalog CRUD.
+- Aggregate dashboard (KPIs, daily trend, marketplace mix).
+- Marketplace tabs, Product performance, Customer geo, P&L ledger.
+- Orders pagination + CSV export.
+- Sales heat map calendar.
+- Settings: exchange rates (recompute on save).
 
-## Verified Against Real Data
-- ChannelEngine CSV (69 rows) → 69 orders inserted.
-- BeezUP XLSX (1,293 rows) → 1,266 distinct order lines.
-- Amazon Vendor PO XLS (6,580 rows) → 661 inserted + 5,913 updated (re-upload idempotent).
-- 14 marketplaces detected: Amazon Vendor, Bol.com, Kaufland, Leroy Merlin, Cdiscount, CASTORAMA, MAISONDUMONDE, MAXEDA, MAXEDA_BEL, MONECHELLE, PinkConnect-VEEPEE (+ NL/BEL variants).
-- Aggregate metrics: €80,185 revenue over 1,317 orders / 3,810 units / AOV €60.89 in YTD 2026 window.
+### Iteration 2 (this session)
+- Canonical marketplace normalization (504 + 117 orders relabeled).
+- Ambiance Web payment-method mapping.
+- **Mon Echelle → Mano Mano** alias.
+- **Prices page** — SKU search + per-marketplace avg/min-max/units + CSV export.
+- **Legacy CostProdShippingCalc workbook parser** — reads Sheet3 col A=SKU, col L=Cout de Production, col M=FBM Frais poste. 30,450 SKU costs loaded from user's file.
+- **Pre-filled cost template download** — server emits CSV with every SKU currently in orders + existing cost data.
+- **Amazon PO ASIN fix** — was storing literal "nan", now correctly falls back to ASIN. May totals now reconcile (€14,694 vs PO reference €14,683).
+- **Renormalize endpoint** — re-apply latest channel mapping to existing orders via Settings button.
 
-## Prioritized Backlog
-- **P1**: Returns/refunds tracking (the data has Refund fields — currently ignored).
-- **P1**: Date-range presets (Today / WTD / MTD / YTD / Last 30d).
-- **P1**: Bulk cost import via the user's existing messy Cost-Production workbook (multi-sheet, French headers).
-- **P2**: Marketplace fees / commissions (BeezUP `Order_TotalCommission`, ChannelEngine `Line.FeeFixed/Rate`).
-- **P2**: VAT report (data captured but not surfaced).
-- **P2**: Email digest (weekly/monthly summary).
-- **P2**: Multi-user with team roles.
-- **P3**: Cohort/retention, repeat-customer analytics.
-- **P3**: Live exchange-rate auto-update via API.
+## Verified Data
+- 13 active marketplaces in DB.
+- ~7,000 orders.
+- 30,450 SKU costs loaded.
+- May 2026 Amazon Vendor: 28 POs / 1,494 units / €14,694 (matches user's PO reference).
 
-## Next Tasks
-- Add returns/refunds parsing and a Returns page.
-- Add date presets to the filter bar.
-- Expose marketplace fees in P&L (subtract commissions before Net).
+## Known Gaps / Future Work
+- **ASIN ↔ Merchant SKU mapping**: Amazon orders are keyed by ASIN, costs are keyed by Merchant SKU. Top SKUs by revenue are now all Amazon ASINs with no cost match. Need a mapping table or a column in the cost template.
+- May 2026 Leroy Merlin / BeezUP data: user needs to upload fresh export (last BeezUP file goes through April only).
+- Returns/refunds tracking (raw data captured, not surfaced).
+- Date-range presets (Today / WTD / MTD / YTD / Last 30d).
+- Marketplace fees/commissions deduction in P&L.
+- Server-side: split server.py into routers, add role checks, batch large mongo aggregations.
+
+## Next Tasks (P1)
+1. ASIN→Merchant-SKU mapping upload (new endpoint + UI).
+2. Fresh May data ingestion + verification.
+3. Date-range preset chips on FiltersBar.
+
+## Credentials
+- admin@ambiancesticker.com / Ambiance2026!
