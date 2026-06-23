@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 2 testing complete. All 11 new backend tests pass (marketplaces rename Mon Echelle → Mano Mano, /api/admin/renormalize-marketplaces, /api/skus/prices with sku filter + structure, /api/skus/prices/export CSV header, /api/templates/cost CSV header + data rows, legacy Sheet3 CostProdShippingCalc workbook parser via /app/sample_data/cost_prod.xlsx, simple CSV cost upload still works, Amazon PO ASIN fallback fix verified — zero orders have sku=='nan' and top-skus list is all Bxxxx ASINs). Frontend E2E (Playwright) covers /prices page (search filter on 'privacy' → 42/500 SKUs, table includes Mano Mano header and not Mon Echelle, CSV export download), /uploads (download-cost-template hits server and downloads cost_template_prefilled.csv, download-blank-template present), /settings renormalize-button triggers POST and toast displays.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/dashboard/summary", "issue": "Margin currently 88.96% (revenue €398,832 / cogs €37,869). Review-request expected ~45% after costs uploaded. Most ordered SKUs likely don't have a matching SKU string in the costs collection (e.g., Amazon ASINs B0xxx have no cost rows; only legacy Ambiance SKUs do). Verify SKU-to-cost matching logic or expected scope."},
+      {"endpoint": "/api/skus/prices", "issue": "Endpoint accepts a `marketplaces` query parameter but does not return prices keyed only by those marketplaces — the response always includes all marketplaces present in the matched orders. Document or restrict."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/prices", "issues": ["Initial render shows 0 rows for a brief moment before data populates; an explicit skeleton or 'Loading...' state would smooth UX. Loading flag exists in code but row container only shows the loading row when filtered is empty (which it isn't, since data.items is also empty). Minor."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration2.py",
+    "/app/backend/tests/test_api.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/iteration2_results.xml"
+  ],
+  "action_items": [
+    "Investigate why margin is ~89% instead of ~45% — likely a SKU-key mismatch between costs collection and orders (e.g., Amazon ASIN vs Merchant SKU). Confirm whether legacy cost workbook SKUs match the actual order SKUs.",
+    "Consider improving Prices page initial loading UX (show spinner while data.items === [] && loading === true)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 1235 lines — recommend splitting into routers (auth, uploads, dashboard, prices, admin) and services (parsers).",
+    "/api/skus/prices loads up to 20,000 grouped rows into Python and pivots in-memory — fine for 30k SKUs, but for larger catalogs use $group + $push pipeline to pivot in Mongo.",
+    "/api/templates/cost: `costs_map = {c['sku']: c async for c in db.costs.find(...)}` loads entire costs collection (30k+) into RAM every call. Cache it or stream.",
+    "parse_cost_file legacy branch silently `except: pass` on any Excel error and falls through to standard parser — could mask genuine workbook errors. Log the exception.",
+    "/api/admin/renormalize-marketplaces is admin-affecting but only requires `get_current_user` (any authenticated user). Add role check (admin only).",
+    "renormalize endpoint pages through all orders without an upper limit — fine now, but consider batching/streaming for very large collections.",
+    "Prices.jsx initial state shows {items:[]} so the 'No SKUs match' message could flash before data arrives — gate that branch on `!loading`."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration2.py (new)"
+  ],
+  "success_rate": {"backend": "100% (11/11 new + 28/28 existing)", "frontend": "100% (all iteration-2 flows passed)"},
+  "test_credentials": "admin@ambiancesticker.com / Ambiance2026! (verified working)",
+  "seed_data_creation": "Uploaded /app/sample_data/cost_prod.xlsx during testing (legacy Sheet3 workbook). Inserted/cleaned TEST_ITER2_001 and TEST_ITER2_002 cost rows.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Two pytest files now: /app/backend/tests/test_api.py (iteration 1 regression) and /app/backend/tests/test_iteration2.py (this iteration). Run with: cd /app/backend/tests && pytest -v. Frontend: Prices page is /prices, accessible from sidebar via [data-testid=nav-prices]. Margin 89% (not 45%) is a possible cost-matching gap — not a blocker for the new features but worth main agent attention."
+}
