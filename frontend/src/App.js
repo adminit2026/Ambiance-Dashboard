@@ -6,6 +6,7 @@ import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Marketplaces from "@/pages/Marketplaces";
 import Products from "@/pages/Products";
+import Prices from "@/pages/Prices";
 import Customers from "@/pages/Customers";
 import ProfitLoss from "@/pages/ProfitLoss";
 import Orders from "@/pages/Orders";
@@ -40,6 +41,7 @@ function App() {
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="marketplaces" element={<Marketplaces />} />
             <Route path="products" element={<Products />} />
+            <Route path="prices" element={<Prices />} />
             <Route path="customers" element={<Customers />} />
             <Route path="profit-loss" element={<ProfitLoss />} />
             <Route path="orders" element={<Orders />} />

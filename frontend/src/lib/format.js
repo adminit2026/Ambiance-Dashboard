@@ -16,15 +16,23 @@ export const fmtDate = (v) => {
 };
 
 export const MARKETPLACE_COLORS = {
-  "Bol.com": "#1B83C5",
+  "BOL.COM": "#1B83C5",
   "Kaufland": "#E10915",
   "Amazon Vendor": "#FF9900",
-  "Amazon": "#FF9900",
   "Leroy Merlin": "#78BE20",
-  "Cdiscount": "#ED1C24",
-  "ManoMano": "#00B388",
-  "Fnac": "#000000",
-  "Rakuten": "#BF0000",
+  "CDiscount": "#ED1C24",
+  "Mano Mano": "#00B388",
+  "Maison": "#C99A2E",
+  "Castorama": "#2C3E91",
+  "Maxeda - NL": "#FF6F1F",
+  "Maxeda - BE": "#C75A19",
+  "PinkConnect Veepee - FR": "#E91E63",
+  "PinkConnect Veepee - BE": "#AD1457",
+  "PinkConnect Veepee - NL": "#F06292",
+  "Zooplus": "#0099CC",
+  "Appros": "#7B5BA7",
+  "Ambiance Web": "#111215",
+  "Mon Echelle": "#9B7B4F",
   "Unknown": "#9CA3AF",
 };
 

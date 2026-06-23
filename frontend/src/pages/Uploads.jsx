@@ -89,6 +89,20 @@ export default function Uploads() {
   const reload = () => api.get("/uploads/history").then((r) => setHistory(r.data));
   useEffect(() => { reload(); }, []);
 
+  const downloadTemplate = async () => {
+    const token = localStorage.getItem("ambiance_token");
+    const resp = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/templates/cost`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "cost_template_prefilled.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div>
       <PageHeader kicker="Data ingestion" title="Uploads" />
@@ -126,19 +140,32 @@ export default function Uploads() {
           </p>
           <ul className="text-sm mt-3 space-y-1 font-mono-num">
             <li><strong>sku</strong> — your merchant SKU (must match marketplace SKU)</li>
-            <li><strong>cost_per_unit</strong> — production cost per unit</li>
-            <li><strong>shipping_cost</strong> <span className="text-[#5E636E]">(optional)</span> — outbound shipping/packaging cost</li>
+            <li><strong>cost_per_unit</strong> — production cost per unit (Cout de Production)</li>
+            <li><strong>shipping_cost</strong> <span className="text-[#5E636E]">(optional)</span> — outbound shipping/packaging cost (FBM Frais poste + packaging)</li>
             <li><strong>product_name</strong> <span className="text-[#5E636E]">(optional)</span></li>
             <li><strong>currency</strong> <span className="text-[#5E636E]">(optional, default EUR)</span></li>
           </ul>
-          <a
-            href={`data:text/csv;charset=utf-8,${encodeURIComponent("sku,product_name,cost_per_unit,shipping_cost,currency\nSAND_116_15x20_white,Baby On Board Sticker White,1.20,0.80,EUR\nroll-mono_Bordeaux_60cmx1m,Decorative Vinyl Roll,3.50,1.10,EUR")}`}
-            download="cost_template.csv"
-            className="btn-secondary inline-flex items-center gap-2 mt-4"
-            data-testid="download-cost-template"
-          >
-            <FileText size={14} /> Download cost_template.csv
-          </a>
+          <p className="text-xs text-[#5E636E] mt-3">
+            We also natively support your legacy <strong>CostProdShippingCalc</strong> workbook — it reads <em>Sheet3</em>, column A as SKU
+            and column L (<em>Cout de Production</em>) as the unit cost. Just upload the .xlsx as-is.
+          </p>
+          <div className="flex gap-2 mt-4">
+            <button
+              onClick={downloadTemplate}
+              className="btn-primary inline-flex items-center gap-2"
+              data-testid="download-cost-template"
+            >
+              <FileText size={14} /> Download template (pre-filled with your SKUs)
+            </button>
+            <a
+              href={`data:text/csv;charset=utf-8,${encodeURIComponent("sku,product_name,cost_per_unit,shipping_cost,currency\nSAND_116_15x20_white,Baby On Board Sticker White,1.20,0.80,EUR\nroll-mono_Bordeaux_60cmx1m,Decorative Vinyl Roll,3.50,1.10,EUR")}`}
+              download="cost_template_blank.csv"
+              className="btn-secondary inline-flex items-center gap-2"
+              data-testid="download-blank-template"
+            >
+              <FileText size={14} /> Blank example
+            </a>
+          </div>
         </div>
       </section>
 

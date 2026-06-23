@@ -187,27 +187,76 @@ def detect_source(filename: str, headers: List[str]) -> str:
 
 
 def channel_to_marketplace(channel_name: str) -> str:
-    """Normalize channel/source names to marketplace labels."""
+    """Normalize channel/source names to canonical marketplace labels.
+    Canonical list: CDiscount, Maison, Leroy Merlin, Mano Mano,
+    PinkConnect Veepee - FR/BE/NL, Castorama, Maxeda - NL/BE,
+    BOL.COM, Zooplus, Kaufland, Appros, Amazon Vendor, Ambiance Web.
+    """
     if not channel_name:
         return "Unknown"
     n = channel_name.strip()
     low = n.lower()
-    if "bol" in low:
-        return "Bol.com"
+    # Ambiance Web — these payment-method values represent direct sales on the brand site
+    ambiance_web_keys = (
+        "paiement par carte bancaire et paypal",
+        "carte bancaire",
+        "kredietkaart",
+        "credit card",
+        "tarjeta de credito",
+        "ambiance web",
+        "ambiance-sticker",
+        "ambiancesticker",
+    )
+    if any(k in low for k in ambiance_web_keys):
+        return "Ambiance Web"
+    # Amazon Vendor
+    if "amazon" in low:
+        return "Amazon Vendor"
+    # Leroy Merlin (incl. Polish variant LEROYMERLIN_POL)
+    if "leroy" in low or "leroymerlin" in low:
+        return "Leroy Merlin"
+    # Castorama
+    if "castorama" in low:
+        return "Castorama"
+    # Maison (du Monde)
+    if "maison" in low or "maisondumonde" in low:
+        return "Maison"
+    # Mon Echelle = ManoMano alias
+    if "monechelle" in low or "mon echelle" in low or "mon-echelle" in low:
+        return "Mano Mano"
+    # PinkConnect Veepee variants — order matters: check BEL_NL before BEL
+    if "pinkconnect" in low or "veepee" in low:
+        if "bel_nl" in low or "bel-nl" in low:
+            return "PinkConnect Veepee - BE"
+        if "_nld" in low or "-nld" in low or low.endswith("nl") or "_nl" in low or "-nl" in low:
+            return "PinkConnect Veepee - NL"
+        if "_bel" in low or "-bel" in low or "belgium" in low or low.endswith("be"):
+            return "PinkConnect Veepee - BE"
+        return "PinkConnect Veepee - FR"
+    # CDiscount
+    if "cdiscount" in low:
+        return "CDiscount"
+    # Bol.com
+    if "bol.com" in low or low.startswith("bol ") or low == "bol":
+        return "BOL.COM"
+    # Maxeda
+    if "maxeda" in low:
+        if "_bel" in low or "-bel" in low or "belgium" in low:
+            return "Maxeda - BE"
+        return "Maxeda - NL"
+    # Kaufland
     if "kaufland" in low:
         return "Kaufland"
-    if "amazon" in low:
-        return "Amazon"
-    if "leroy" in low:
-        return "Leroy Merlin"
-    if "cdiscount" in low:
-        return "Cdiscount"
-    if "mano" in low or "manomano" in low:
-        return "ManoMano"
-    if "fnac" in low:
-        return "Fnac"
-    if "rakuten" in low:
-        return "Rakuten"
+    # Mano Mano
+    if "mano" in low:
+        return "Mano Mano"
+    # Zooplus
+    if "zooplus" in low or "zoo plus" in low:
+        return "Zooplus"
+    # Appros
+    if "appros" in low:
+        return "Appros"
+    # Fallback: keep original
     return n
 
 
@@ -312,10 +361,16 @@ def parse_amazon_po(content: bytes) -> List[dict]:
     except Exception:
         df = pd.read_excel(io.BytesIO(content), sheet_name=0)
     rows = []
+
+    def s(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        return str(v).strip()
+
     for _, r in df.iterrows():
-        po = str(r.get("PO", "")).strip()
-        sku = str(r.get("Merchant SKU", "")).strip() or str(r.get("ASIN", "")).strip()
-        if not po or not sku:
+        po = s(r.get("PO"))
+        sku = s(r.get("Merchant SKU")) or s(r.get("ASIN"))
+        if not po or not sku or sku.lower() in ("nan", "none"):
             continue
         order_date = parse_date(r.get("Order date"))
         qty_req = int(parse_number(r.get("Requested quantity") or 0))
@@ -325,10 +380,10 @@ def parse_amazon_po(content: bytes) -> List[dict]:
         total_acc = parse_number(r.get("Total accepted cost") or 0)
         total_req = parse_number(r.get("Total requested cost") or 0)
         line_total = total_acc if total_acc else (total_req if total_req else unit_cost * qty)
-        currency = (str(r.get("Currency", "EUR")).strip() or "EUR")
-        ship_to = str(r.get("Ship-to location", "")).strip()
-        product_name = str(r.get("Product name", "")).strip()
-        status = str(r.get("Status", "")).strip()
+        currency = s(r.get("Currency")) or "EUR"
+        ship_to = s(r.get("Ship-to location"))
+        product_name = s(r.get("Product name"))
+        status = s(r.get("Status"))
         rows.append({
             "source": "amazon_po",
             "marketplace": "Amazon Vendor",
@@ -353,9 +408,51 @@ def parse_amazon_po(content: bytes) -> List[dict]:
 
 
 def parse_cost_file(content: bytes, filename: str) -> List[dict]:
-    """Cost upload template. Expected columns (case-insensitive):
-    sku, cost_per_unit (or cost, production_cost), shipping_cost (optional), product_name (opt), currency (opt)."""
+    """Cost upload. Supports two formats:
+    1) Standard template (CSV/XLSX) with columns: sku, cost_per_unit (or cost), shipping_cost (opt), product_name (opt), currency (opt).
+    2) Ambiance legacy workbook 'CostProdShippingCalc' with Sheet3, header on row 3 (idx 2),
+       SKU in column A, 'Cout de Production' in column L (idx 11),
+       'FBM Frais poste + packaging' in column M (idx 12).
+    """
     fn = (filename or "").lower()
+    # Detect legacy Ambiance workbook by sheet name
+    if not fn.endswith(".csv"):
+        try:
+            xl = pd.ExcelFile(io.BytesIO(content), engine="openpyxl")
+            sheets_lower = [s.lower() for s in xl.sheet_names]
+            if "sheet3" in sheets_lower:
+                # Legacy ambiance cost workbook
+                raw = pd.read_excel(io.BytesIO(content), sheet_name="Sheet3", header=None, engine="openpyxl")
+                # Use row index 2 as header
+                headers = [str(x).strip() if pd.notna(x) else "" for x in raw.iloc[2].tolist()]
+                data = raw.iloc[3:].reset_index(drop=True)
+                data.columns = headers + [f"_col{i}" for i in range(len(data.columns) - len(headers))] if len(data.columns) > len(headers) else headers[: len(data.columns)]
+                out = []
+                for _, r in data.iterrows():
+                    sku = r.get("SKU")
+                    if not isinstance(sku, str):
+                        if pd.isna(sku):
+                            continue
+                        sku = str(sku).strip()
+                    sku = sku.strip()
+                    if not sku or sku.lower() in ("sample", "sku", "nan"):
+                        continue
+                    cost = parse_number(r.get("Cout de Production"))
+                    if cost <= 0:
+                        continue
+                    shipping = parse_number(r.get("FBM Frais poste + packaging") or r.get("FBA SHIPPING") or 0)
+                    out.append({
+                        "sku": sku,
+                        "product_name": (str(r.get("Product description")).strip() if pd.notna(r.get("Product description")) else ""),
+                        "cost_per_unit": cost,
+                        "shipping_cost": shipping,
+                        "currency": "EUR",
+                    })
+                return out
+        except Exception:
+            pass
+
+    # Fallback: standard template parsing
     if fn.endswith(".csv"):
         text = content.decode("utf-8-sig", errors="replace")
         df = pd.read_csv(io.StringIO(text))
@@ -379,8 +476,8 @@ def parse_cost_file(content: bytes, filename: str) -> List[dict]:
         cost = parse_number(pick(row, "cost_per_unit", "cost", "production_cost", "cout_de_production", "unit_cost"))
         if cost <= 0:
             continue
-        shipping = parse_number(pick(row, "shipping_cost", "shipping", "fbm_shipping", "frais_poste"))
-        product_name = str(pick(row, "product_name", "title", "description") or "").strip()
+        shipping = parse_number(pick(row, "shipping_cost", "shipping", "fbm_shipping", "frais_poste", "fbm_frais_poste_+_packaging"))
+        product_name = str(pick(row, "product_name", "title", "description", "product_description") or "").strip()
         currency = str(pick(row, "currency") or "EUR").strip() or "EUR"
         out.append({
             "sku": str(sku).strip(),
@@ -969,6 +1066,25 @@ async def list_marketplaces(user=Depends(get_current_user)):
     return sorted([m for m in mks if m])
 
 
+@api.post("/admin/renormalize-marketplaces")
+async def renormalize_marketplaces(user=Depends(get_current_user)):
+    """Re-apply channel_to_marketplace mapping to all existing orders."""
+    from pymongo import UpdateOne
+    bulk = []
+    changed = 0
+    async for o in db.orders.find({}, {"_id": 1, "channel_raw": 1, "marketplace": 1}):
+        new_mk = channel_to_marketplace(o.get("channel_raw") or o.get("marketplace") or "")
+        if new_mk != o.get("marketplace"):
+            bulk.append(UpdateOne({"_id": o["_id"]}, {"$set": {"marketplace": new_mk}}))
+            changed += 1
+        if len(bulk) >= 500:
+            await db.orders.bulk_write(bulk)
+            bulk = []
+    if bulk:
+        await db.orders.bulk_write(bulk)
+    return {"updated": changed}
+
+
 @api.get("/skus")
 async def list_skus(user=Depends(get_current_user), limit: int = 500):
     pipeline = [
@@ -978,6 +1094,127 @@ async def list_skus(user=Depends(get_current_user), limit: int = 500):
     ]
     rows = await db.orders.aggregate(pipeline).to_list(limit)
     return [{"sku": r["_id"], "product_name": r["product_name"] or "", "units": int(r["units"] or 0)} for r in rows]
+
+
+@api.get("/skus/prices")
+async def sku_prices(
+    sku: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    marketplaces: Optional[str] = None,
+    limit: int = 200,
+    user=Depends(get_current_user),
+):
+    """Returns per-SKU per-marketplace avg/min/max unit prices."""
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    pipeline = [
+        {"$match": match} if match else {"$match": {}},
+        {"$match": {"unit_price": {"$gt": 0}}},
+        {"$group": {
+            "_id": {"sku": "$sku", "marketplace": "$marketplace", "currency": "$currency"},
+            "product_name": {"$first": "$product_name"},
+            "avg_price": {"$avg": "$unit_price"},
+            "min_price": {"$min": "$unit_price"},
+            "max_price": {"$max": "$unit_price"},
+            "units": {"$sum": "$quantity"},
+            "orders": {"$addToSet": "$order_id"},
+            "last_order": {"$max": "$order_date_iso"},
+        }},
+        {"$sort": {"_id.sku": 1, "_id.marketplace": 1}},
+    ]
+    rows = await db.orders.aggregate(pipeline).to_list(20000)
+    # Pivot into {sku, product_name, prices: { marketplace: { avg, min, max, units, currency, last_order } } }
+    by_sku: Dict[str, dict] = {}
+    for r in rows:
+        sku_id = r["_id"]["sku"]
+        mk = r["_id"]["marketplace"] or "Unknown"
+        cur = r["_id"]["currency"] or "EUR"
+        if sku_id not in by_sku:
+            by_sku[sku_id] = {
+                "sku": sku_id,
+                "product_name": r["product_name"] or "",
+                "prices": {},
+                "total_units": 0,
+            }
+        by_sku[sku_id]["prices"][mk] = {
+            "avg": round(float(r["avg_price"] or 0), 2),
+            "min": round(float(r["min_price"] or 0), 2),
+            "max": round(float(r["max_price"] or 0), 2),
+            "units": int(r["units"] or 0),
+            "orders": len(r["orders"]),
+            "currency": cur,
+            "last_order": r.get("last_order"),
+        }
+        by_sku[sku_id]["total_units"] += int(r["units"] or 0)
+    # Sort by total units desc, apply limit
+    items = sorted(by_sku.values(), key=lambda x: x["total_units"], reverse=True)[:limit]
+    # Collect marketplaces present
+    marketplaces_present = sorted({mk for it in items for mk in it["prices"].keys()})
+    return {"marketplaces": marketplaces_present, "items": items}
+
+
+@api.get("/skus/prices/export")
+async def sku_prices_export(
+    sku: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    marketplaces: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    data = await sku_prices(sku=sku, date_from=date_from, date_to=date_to, marketplaces=marketplaces, limit=10000, user=user)
+    mks = data["marketplaces"]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    header = ["SKU", "Product"] + [f"{m} (avg)" for m in mks] + [f"{m} (units)" for m in mks]
+    w.writerow(header)
+    for it in data["items"]:
+        row = [it["sku"], it["product_name"]]
+        for m in mks:
+            p = it["prices"].get(m)
+            row.append(p["avg"] if p else "")
+        for m in mks:
+            p = it["prices"].get(m)
+            row.append(p["units"] if p else "")
+        w.writerow(row)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=sku_prices.csv"},
+    )
+
+
+@api.get("/templates/cost")
+async def download_cost_template(user=Depends(get_current_user)):
+    """Generate a cost-upload template pre-filled with all SKUs currently in orders.
+    Columns: sku, product_name, cost_per_unit, shipping_cost, currency.
+    Existing costs are pre-populated so the user can edit and re-upload."""
+    # Pull all unique SKUs from orders
+    pipeline = [
+        {"$group": {"_id": "$sku", "product_name": {"$first": "$product_name"}, "units": {"$sum": "$quantity"}}},
+        {"$sort": {"units": -1}},
+    ]
+    skus = await db.orders.aggregate(pipeline).to_list(20000)
+    costs_map = {c["sku"]: c async for c in db.costs.find({}, {"_id": 0})}
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["sku", "product_name", "cost_per_unit", "shipping_cost", "currency"])
+    for s in skus:
+        sku_id = s["_id"]
+        c = costs_map.get(sku_id, {})
+        w.writerow([
+            sku_id,
+            s.get("product_name") or c.get("product_name") or "",
+            c.get("cost_per_unit", ""),
+            c.get("shipping_cost", ""),
+            c.get("currency", "EUR"),
+        ])
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=cost_template.csv"},
+    )
 
 
 @api.get("/")

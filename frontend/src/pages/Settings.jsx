@@ -70,6 +70,18 @@ export default function Settings() {
     loadCosts();
   };
 
+  const renormalize = async () => {
+    setBusy(true);
+    try {
+      const { data } = await api.post("/admin/renormalize-marketplaces");
+      toast.success(`Re-normalized ${data.updated} orders`);
+    } catch (e) {
+      toast.error(formatApiError(e.response?.data?.detail) || "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader kicker="Configuration" title="Settings" />
@@ -121,6 +133,18 @@ export default function Settings() {
             <input className="in w-full" placeholder="Currency (default EUR)" value={manual.currency} onChange={(e) => setManual({ ...manual, currency: e.target.value })} data-testid="manual-cost-currency" />
             <button className="btn-primary w-full" disabled={busy} data-testid="manual-cost-save">Save cost</button>
           </form>
+
+          <div className="mt-8 pt-6 border-t border-[#E5E7EB]">
+            <div className="eyebrow">Marketplace labels</div>
+            <h4 className="font-display text-base font-semibold mt-1 mb-2">Re-normalize existing orders</h4>
+            <p className="text-xs text-[#5E636E] mb-3">
+              Re-applies the latest channel→marketplace mapping (CDiscount, Maison, Castorama, Maxeda - NL/BE,
+              PinkConnect Veepee - FR/BE/NL, BOL.COM, Ambiance Web, etc.) to every existing order.
+            </p>
+            <button onClick={renormalize} disabled={busy} className="btn-secondary" data-testid="renormalize-button">
+              Re-normalize marketplaces
+            </button>
+          </div>
         </div>
       </section>
 
