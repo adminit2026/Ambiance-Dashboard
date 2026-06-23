@@ -1,0 +1,174 @@
+import { useEffect, useState, useRef } from "react";
+import PageHeader from "@/components/PageHeader";
+import api, { formatApiError } from "@/lib/api";
+import { toast } from "sonner";
+import { UploadCloud, CheckCircle2, FileText, Loader2 } from "lucide-react";
+import { fmtDate, fmtNum } from "@/lib/format";
+
+function Dropzone({ label, hint, endpoint, accept, testId, sourceOptions, onDone }) {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [source, setSource] = useState(sourceOptions?.[0]?.value || "auto");
+
+  const upload = async (file) => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      if (sourceOptions) fd.append("source", source);
+      const { data } = await api.post(endpoint, fd, { headers: { "Content-Type": "multipart/form-data" } });
+      toast.success(`${file.name} — ${data.inserted} new · ${data.updated} updated · ${data.rows_total} rows`);
+      onDone?.();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Upload failed");
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  return (
+    <div className="surface p-6" data-testid={testId}>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <div className="eyebrow">{label}</div>
+          <h3 className="font-display text-xl font-semibold mt-1">{hint}</h3>
+        </div>
+        {sourceOptions && (
+          <select
+            className="in"
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            data-testid={`${testId}-source-select`}
+          >
+            {sourceOptions.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        )}
+      </div>
+      <div
+        className={`dropzone p-10 text-center cursor-pointer ${dragOver ? "drag-over" : ""}`}
+        onClick={() => inputRef.current?.click()}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          const f = e.dataTransfer.files?.[0];
+          if (f) upload(f);
+        }}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept={accept}
+          className="hidden"
+          data-testid={`${testId}-input`}
+          onChange={(e) => upload(e.target.files?.[0])}
+        />
+        {busy ? (
+          <div className="flex items-center justify-center gap-2 text-[#0055FF]"><Loader2 className="animate-spin" size={16} /> Uploading...</div>
+        ) : (
+          <>
+            <UploadCloud className="mx-auto mb-3 text-[#0055FF]" size={32} strokeWidth={1.5} />
+            <div className="text-sm font-medium text-[#111215]">Drop file here or click to browse</div>
+            <div className="text-xs text-[#5E636E] mt-1">{accept}</div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function Uploads() {
+  const [history, setHistory] = useState([]);
+
+  const reload = () => api.get("/uploads/history").then((r) => setHistory(r.data));
+  useEffect(() => { reload(); }, []);
+
+  return (
+    <div>
+      <PageHeader kicker="Data ingestion" title="Uploads" />
+      <section className="px-8 py-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Dropzone
+          label="Orders"
+          hint="Marketplace orders (CSV / XLSX / XLS)"
+          endpoint="/uploads/orders"
+          accept=".csv,.xls,.xlsx"
+          testId="dropzone-orders"
+          sourceOptions={[
+            { value: "auto", label: "Auto-detect" },
+            { value: "channelengine", label: "ChannelEngine (CSV)" },
+            { value: "beezup", label: "BeezUP (XLSX)" },
+            { value: "amazon_po", label: "Amazon Vendor PO (XLS/XLSX)" },
+          ]}
+          onDone={reload}
+        />
+        <Dropzone
+          label="Cost of Production"
+          hint="Per-SKU cost template (CSV / XLSX)"
+          endpoint="/uploads/costs"
+          accept=".csv,.xlsx"
+          testId="dropzone-costs"
+          onDone={reload}
+        />
+      </section>
+
+      <section className="px-8 py-6">
+        <div className="surface p-6">
+          <div className="eyebrow">Cost template</div>
+          <h3 className="font-display text-xl font-semibold mt-1 mb-3">Expected columns</h3>
+          <p className="text-sm text-[#5E636E]">
+            Your Cost of Production file should contain at least these columns (case-insensitive):
+          </p>
+          <ul className="text-sm mt-3 space-y-1 font-mono-num">
+            <li><strong>sku</strong> — your merchant SKU (must match marketplace SKU)</li>
+            <li><strong>cost_per_unit</strong> — production cost per unit</li>
+            <li><strong>shipping_cost</strong> <span className="text-[#5E636E]">(optional)</span> — outbound shipping/packaging cost</li>
+            <li><strong>product_name</strong> <span className="text-[#5E636E]">(optional)</span></li>
+            <li><strong>currency</strong> <span className="text-[#5E636E]">(optional, default EUR)</span></li>
+          </ul>
+          <a
+            href={`data:text/csv;charset=utf-8,${encodeURIComponent("sku,product_name,cost_per_unit,shipping_cost,currency\nSAND_116_15x20_white,Baby On Board Sticker White,1.20,0.80,EUR\nroll-mono_Bordeaux_60cmx1m,Decorative Vinyl Roll,3.50,1.10,EUR")}`}
+            download="cost_template.csv"
+            className="btn-secondary inline-flex items-center gap-2 mt-4"
+            data-testid="download-cost-template"
+          >
+            <FileText size={14} /> Download cost_template.csv
+          </a>
+        </div>
+      </section>
+
+      <section className="px-8 pb-12">
+        <div className="surface p-6">
+          <div className="eyebrow">Recent uploads</div>
+          <h3 className="font-display text-xl font-semibold mt-1 mb-4">Upload history</h3>
+          {history.length === 0 ? (
+            <div className="text-sm text-[#5E636E]">No uploads yet.</div>
+          ) : (
+            <table className="dense w-full" data-testid="upload-history">
+              <thead>
+                <tr><th>When</th><th>File</th><th>Source</th><th className="text-right">Rows</th><th className="text-right">New</th><th className="text-right">Updated</th></tr>
+              </thead>
+              <tbody>
+                {history.map((h, i) => (
+                  <tr key={i}>
+                    <td className="font-mono-num text-[#5E636E]">{fmtDate(h.uploaded_at)}</td>
+                    <td className="truncate max-w-[320px]" title={h.filename}>{h.filename}</td>
+                    <td><span className="pill">{h.source}</span></td>
+                    <td className="text-right font-mono-num">{fmtNum(h.rows_total)}</td>
+                    <td className="text-right font-mono-num text-[#00A859]">+{fmtNum(h.inserted)}</td>
+                    <td className="text-right font-mono-num text-[#5E636E]">{fmtNum(h.updated)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}

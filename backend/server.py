@@ -1,89 +1,997 @@
-from fastapi import FastAPI, APIRouter
 from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
-import uuid
-from datetime import datetime, timezone
-
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / ".env")
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+import os
+import io
+import csv
+import re
+import logging
+import uuid
+import bcrypt
+import jwt
+import pandas as pd
+from datetime import datetime, timezone, timedelta, date
+from typing import Optional, List, Dict, Any
 
-# Create the main app without a prefix
-app = FastAPI()
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File, Form, Query
+from fastapi.responses import StreamingResponse
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, EmailStr, Field
+from bson import ObjectId
 
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
+
+# ------------------- CONFIG -------------------
+MONGO_URL = os.environ["MONGO_URL"]
+DB_NAME = os.environ["DB_NAME"]
+JWT_SECRET = os.environ["JWT_SECRET"]
+JWT_ALGO = "HS256"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@ambiancesticker.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Ambiance2026!")
+ADMIN_NAME = os.environ.get("ADMIN_NAME", "Ambiance Admin")
+
+client = AsyncIOMotorClient(MONGO_URL)
+db = client[DB_NAME]
+
+app = FastAPI(title="Ambiance Analytics Hub")
+api = APIRouter(prefix="/api")
+
+logger = logging.getLogger("ambiance")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
 
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+# ------------------- AUTH HELPERS -------------------
+def hash_password(p: str) -> str:
+    return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
 
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
+def verify_password(p: str, h: str) -> bool:
+    try:
+        return bcrypt.checkpw(p.encode(), h.encode())
+    except Exception:
+        return False
+
+
+def create_access_token(user_id: str, email: str) -> str:
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "type": "access",
+        "exp": datetime.now(timezone.utc) + timedelta(hours=12),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
+
+
+async def get_current_user(request: Request) -> dict:
+    token = request.cookies.get("access_token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+        user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        return {"id": str(user["_id"]), "email": user["email"], "name": user.get("name", ""), "role": user.get("role", "admin")}
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+# ------------------- MODELS -------------------
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class ExchangeRateUpdate(BaseModel):
+    rates: Dict[str, float]  # ISO -> rate (1 unit = X EUR)
+
+
+class CostManualIn(BaseModel):
+    sku: str
+    product_name: Optional[str] = ""
+    cost_per_unit: float
+    shipping_cost: float = 0.0
+    currency: str = "EUR"
+
+
+# ------------------- UTILITIES -------------------
+def parse_number(v) -> float:
+    """Parse number that may use comma as decimal (European format)."""
+    if v is None:
+        return 0.0
+    if isinstance(v, (int, float)):
+        if pd.isna(v):
+            return 0.0
+        return float(v)
+    s = str(v).strip()
+    if not s or s.lower() == "nan":
+        return 0.0
+    # remove thousand sep, normalize decimal
+    s = s.replace("\u00a0", "").replace(" ", "")
+    if "," in s and "." in s:
+        # likely thousand-sep ',' and decimal '.'
+        s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def parse_date(v) -> Optional[datetime]:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    if isinstance(v, datetime):
+        return v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v.astimezone(timezone.utc)
+    if isinstance(v, date):
+        return datetime(v.year, v.month, v.day, tzinfo=timezone.utc)
+    s = str(v).strip()
+    if not s:
+        return None
+    # Try common formats
+    formats = [
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S.%fZ",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+        "%m/%d/%Y %H:%M:%S %z",
+        "%m/%d/%Y %H:%M:%S",
+        "%m/%d/%Y",
+        "%d/%m/%Y",
+    ]
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+        except ValueError:
+            continue
+    # last resort: pandas
+    try:
+        ts = pd.to_datetime(s, utc=True, errors="coerce")
+        if pd.isna(ts):
+            return None
+        return ts.to_pydatetime()
+    except Exception:
+        return None
+
+
+def detect_source(filename: str, headers: List[str]) -> str:
+    fn = (filename or "").lower()
+    cols = [c.lower() for c in headers]
+    cols_set = set(cols)
+    if "po" in cols_set and "asin" in cols_set:
+        return "amazon_po"
+    if "marketplace" in cols_set and "order_marketplaceorderid" in cols_set:
+        return "beezup"
+    if any("line.merchantproductno" in c for c in cols) or any("order.channelname" in c for c in cols):
+        return "channelengine"
+    # filename-based fallback
+    if "channelengine" in fn:
+        return "channelengine"
+    if "beezup" in fn:
+        return "beezup"
+    if "poitem" in fn or "amazon" in fn:
+        return "amazon_po"
+    return "unknown"
+
+
+def channel_to_marketplace(channel_name: str) -> str:
+    """Normalize channel/source names to marketplace labels."""
+    if not channel_name:
+        return "Unknown"
+    n = channel_name.strip()
+    low = n.lower()
+    if "bol" in low:
+        return "Bol.com"
+    if "kaufland" in low:
+        return "Kaufland"
+    if "amazon" in low:
+        return "Amazon"
+    if "leroy" in low:
+        return "Leroy Merlin"
+    if "cdiscount" in low:
+        return "Cdiscount"
+    if "mano" in low or "manomano" in low:
+        return "ManoMano"
+    if "fnac" in low:
+        return "Fnac"
+    if "rakuten" in low:
+        return "Rakuten"
+    return n
+
+
+# ------------------- PARSERS -------------------
+def parse_channelengine(content: bytes) -> List[dict]:
+    """ChannelEngine CSV - comma separated, quoted, ~100 columns."""
+    text = content.decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+    rows = []
+    for r in reader:
+        if not r:
+            continue
+        order_id = r.get("Order.ChannelOrderNo") or r.get("Order.Id") or r.get("Order.MerchantOrderNo")
+        sku = r.get("Line.MerchantProductNo") or r.get("Line.ChannelProductNo") or ""
+        if not order_id or not sku:
+            continue
+        channel = r.get("Order.ChannelName", "")
+        order_date = parse_date(r.get("Order.OrderDate") or r.get("Order.CreatedAt"))
+        qty = int(parse_number(r.get("Line.Quantity", 1) or 1))
+        unit_price = parse_number(r.get("Line.UnitPriceInclVat") or r.get("Line.UnitPriceExclVat"))
+        line_total = parse_number(r.get("Line.LineTotalInclVat") or r.get("Line.LineTotalExclVat"))
+        shipping = parse_number(r.get("Order.ShippingCostsInclVat") or r.get("Order.ShippingCostsExclVat"))
+        vat = parse_number(r.get("Line.LineVat"))
+        currency = (r.get("Order.CurrencyCode") or "EUR").strip() or "EUR"
+        status = (r.get("Order.Status") or "").strip()
+        country = (r.get("ShippingAddress.CountryIso") or r.get("BillingAddress.CountryIso") or "").strip()
+        city = (r.get("ShippingAddress.City") or r.get("BillingAddress.City") or "").strip()
+        customer_email = (r.get("Order.Email") or "").strip()
+        product_name = (r.get("Line.ProductName") or "").strip()
+        rows.append({
+            "source": "channelengine",
+            "marketplace": channel_to_marketplace(channel),
+            "channel_raw": channel,
+            "order_id": str(order_id),
+            "line_key": f"{order_id}::{sku}",
+            "sku": str(sku).strip(),
+            "product_name": product_name,
+            "quantity": qty,
+            "unit_price": unit_price,
+            "line_total": line_total,
+            "shipping_cost": shipping,
+            "vat": vat,
+            "currency": currency,
+            "order_date": order_date,
+            "status": status,
+            "country": country,
+            "city": city,
+            "customer_email": customer_email,
+        })
+    return rows
+
+
+def parse_beezup(content: bytes) -> List[dict]:
+    df = pd.read_excel(io.BytesIO(content), sheet_name=0, dtype=str)
+    df = df.fillna("")
+    rows = []
+    for _, r in df.iterrows():
+        marketplace = channel_to_marketplace(r.get("MarketPlace", ""))
+        order_id = (r.get("Order_MarketPlaceOrderId") or r.get("Order_MerchantOrderId") or "").strip()
+        sku = (r.get("OrderItem_MerchantProductId") or "").strip()
+        if not order_id or not sku:
+            continue
+        order_date = parse_date(r.get("Order_PurchaseUtcDate"))
+        qty = int(parse_number(r.get("OrderItem_Quantity") or 1))
+        unit_price = parse_number(r.get("OrderItem_ItemPrice"))
+        line_total = parse_number(r.get("OrderItem_TotalPrice"))
+        shipping = parse_number(r.get("OrderItem_Shipping_Price") or r.get("Order_Shipping_Price"))
+        vat = parse_number(r.get("OrderItem_ItemTax"))
+        currency = (r.get("Order_CurrencyCode") or "EUR").strip() or "EUR"
+        status = (r.get("Order_Status_BeezUPOrderStatus") or "").strip()
+        country = (r.get("Order_Shipping_AddressCountryIsoCodeAlpha2") or "").strip()
+        city = (r.get("Order_Shipping_AddressCity") or "").strip()
+        customer_email = (r.get("Order_Buyer_Email") or "").strip()
+        product_name = (r.get("OrderItem_Title") or "").strip()
+        rows.append({
+            "source": "beezup",
+            "marketplace": marketplace,
+            "channel_raw": r.get("MarketPlace", ""),
+            "order_id": order_id,
+            "line_key": f"{order_id}::{sku}",
+            "sku": sku,
+            "product_name": product_name,
+            "quantity": qty,
+            "unit_price": unit_price,
+            "line_total": line_total,
+            "shipping_cost": shipping,
+            "vat": vat,
+            "currency": currency,
+            "order_date": order_date,
+            "status": status,
+            "country": country,
+            "city": city,
+            "customer_email": customer_email,
+        })
+    return rows
+
+
+def parse_amazon_po(content: bytes) -> List[dict]:
+    # Try xls first, then xlsx
+    try:
+        df = pd.read_excel(io.BytesIO(content), sheet_name=0, engine="xlrd")
+    except Exception:
+        df = pd.read_excel(io.BytesIO(content), sheet_name=0)
+    rows = []
+    for _, r in df.iterrows():
+        po = str(r.get("PO", "")).strip()
+        sku = str(r.get("Merchant SKU", "")).strip() or str(r.get("ASIN", "")).strip()
+        if not po or not sku:
+            continue
+        order_date = parse_date(r.get("Order date"))
+        qty_req = int(parse_number(r.get("Requested quantity") or 0))
+        qty_acc = int(parse_number(r.get("Accepted quantity") or 0))
+        qty = qty_acc or qty_req
+        unit_cost = parse_number(r.get("Cost"))
+        total_acc = parse_number(r.get("Total accepted cost") or 0)
+        total_req = parse_number(r.get("Total requested cost") or 0)
+        line_total = total_acc if total_acc else (total_req if total_req else unit_cost * qty)
+        currency = (str(r.get("Currency", "EUR")).strip() or "EUR")
+        ship_to = str(r.get("Ship-to location", "")).strip()
+        product_name = str(r.get("Product name", "")).strip()
+        status = str(r.get("Status", "")).strip()
+        rows.append({
+            "source": "amazon_po",
+            "marketplace": "Amazon Vendor",
+            "channel_raw": "Amazon Vendor PO",
+            "order_id": po,
+            "line_key": f"{po}::{sku}",
+            "sku": sku,
+            "product_name": product_name,
+            "quantity": qty,
+            "unit_price": unit_cost,
+            "line_total": line_total,
+            "shipping_cost": 0.0,
+            "vat": 0.0,
+            "currency": currency,
+            "order_date": order_date,
+            "status": status,
+            "country": ship_to,
+            "city": ship_to,
+            "customer_email": "",
+        })
+    return rows
+
+
+def parse_cost_file(content: bytes, filename: str) -> List[dict]:
+    """Cost upload template. Expected columns (case-insensitive):
+    sku, cost_per_unit (or cost, production_cost), shipping_cost (optional), product_name (opt), currency (opt)."""
+    fn = (filename or "").lower()
+    if fn.endswith(".csv"):
+        text = content.decode("utf-8-sig", errors="replace")
+        df = pd.read_csv(io.StringIO(text))
+    else:
+        try:
+            df = pd.read_excel(io.BytesIO(content), engine="openpyxl")
+        except Exception:
+            df = pd.read_excel(io.BytesIO(content))
+    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+    def pick(row, *keys):
+        for k in keys:
+            if k in row and not pd.isna(row[k]):
+                return row[k]
+        return None
+    out = []
+    for _, r in df.iterrows():
+        row = r.to_dict()
+        sku = pick(row, "sku", "merchant_sku", "merchant_product_id")
+        if not sku or (isinstance(sku, float) and pd.isna(sku)):
+            continue
+        cost = parse_number(pick(row, "cost_per_unit", "cost", "production_cost", "cout_de_production", "unit_cost"))
+        if cost <= 0:
+            continue
+        shipping = parse_number(pick(row, "shipping_cost", "shipping", "fbm_shipping", "frais_poste"))
+        product_name = str(pick(row, "product_name", "title", "description") or "").strip()
+        currency = str(pick(row, "currency") or "EUR").strip() or "EUR"
+        out.append({
+            "sku": str(sku).strip(),
+            "product_name": product_name,
+            "cost_per_unit": cost,
+            "shipping_cost": shipping,
+            "currency": currency,
+        })
+    return out
+
+
+# ------------------- STARTUP -------------------
+async def get_rates() -> Dict[str, float]:
+    doc = await db.settings.find_one({"_id": "exchange_rates"})
+    if not doc:
+        defaults = {"EUR": 1.0, "USD": 0.92, "GBP": 1.17, "PLN": 0.23, "SEK": 0.087, "DKK": 0.134, "CHF": 1.05, "CZK": 0.04, "NOK": 0.085}
+        await db.settings.update_one({"_id": "exchange_rates"}, {"$set": {"rates": defaults}}, upsert=True)
+        return defaults
+    return doc.get("rates", {"EUR": 1.0})
+
+
+def to_eur(amount: float, currency: str, rates: Dict[str, float]) -> float:
+    c = (currency or "EUR").upper()
+    return amount * rates.get(c, 1.0)
+
+
+@app.on_event("startup")
+async def on_startup():
+    # indexes
+    await db.users.create_index("email", unique=True)
+    await db.orders.create_index("line_key", unique=True)
+    await db.orders.create_index([("order_date", -1)])
+    await db.orders.create_index("marketplace")
+    await db.orders.create_index("sku")
+    await db.costs.create_index("sku", unique=True)
+    await db.uploads.create_index([("uploaded_at", -1)])
+
+    # seed admin
+    existing = await db.users.find_one({"email": ADMIN_EMAIL})
+    if existing is None:
+        await db.users.insert_one({
+            "email": ADMIN_EMAIL,
+            "password_hash": hash_password(ADMIN_PASSWORD),
+            "name": ADMIN_NAME,
+            "role": "admin",
+            "created_at": datetime.now(timezone.utc),
+        })
+        logger.info("Seeded admin user: %s", ADMIN_EMAIL)
+    elif not verify_password(ADMIN_PASSWORD, existing["password_hash"]):
+        await db.users.update_one({"email": ADMIN_EMAIL}, {"$set": {"password_hash": hash_password(ADMIN_PASSWORD)}})
+        logger.info("Updated admin password to match .env")
+
+    await get_rates()
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    client.close()
+
+
+# ------------------- AUTH ROUTES -------------------
+@api.post("/auth/login")
+async def login(payload: LoginIn, response: Response):
+    email = payload.email.lower().strip()
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(payload.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = create_access_token(str(user["_id"]), user["email"])
+    response.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=12 * 3600, path="/")
+    return {
+        "token": token,
+        "user": {"id": str(user["_id"]), "email": user["email"], "name": user.get("name", ""), "role": user.get("role", "admin")},
+    }
+
+
+@api.post("/auth/logout")
+async def logout(response: Response, user=Depends(get_current_user)):
+    response.delete_cookie("access_token", path="/")
+    return {"ok": True}
+
+
+@api.get("/auth/me")
+async def me(user=Depends(get_current_user)):
+    return user
+
+
+# ------------------- UPLOADS -------------------
+@api.post("/uploads/orders")
+async def upload_orders(file: UploadFile = File(...), source: str = Form("auto"), user=Depends(get_current_user)):
+    content = await file.read()
+    filename = file.filename or "uploaded"
+    # detect headers if auto
+    if source == "auto":
+        try:
+            if filename.lower().endswith(".csv"):
+                text = content.decode("utf-8-sig", errors="replace")
+                headers = next(csv.reader(io.StringIO(text)))
+            else:
+                try:
+                    df_head = pd.read_excel(io.BytesIO(content), nrows=0)
+                except Exception:
+                    df_head = pd.read_excel(io.BytesIO(content), nrows=0, engine="xlrd")
+                headers = list(df_head.columns)
+            source = detect_source(filename, headers)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not detect source: {e}")
+
+    if source not in ("channelengine", "beezup", "amazon_po"):
+        raise HTTPException(status_code=400, detail=f"Unknown source '{source}'. Specify channelengine, beezup, or amazon_po.")
+
+    try:
+        if source == "channelengine":
+            rows = parse_channelengine(content)
+        elif source == "beezup":
+            rows = parse_beezup(content)
+        else:
+            rows = parse_amazon_po(content)
+    except Exception as e:
+        logger.exception("Parse error")
+        raise HTTPException(status_code=400, detail=f"Failed to parse file: {e}")
+
+    rates = await get_rates()
+    inserted, updated = 0, 0
+    for r in rows:
+        r["order_date_iso"] = r["order_date"].isoformat() if r["order_date"] else None
+        r["line_total_eur"] = to_eur(r["line_total"], r["currency"], rates)
+        r["shipping_cost_eur"] = to_eur(r["shipping_cost"], r["currency"], rates)
+        res = await db.orders.update_one(
+            {"line_key": r["line_key"]},
+            {"$set": r, "$setOnInsert": {"created_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True,
+        )
+        if res.upserted_id:
+            inserted += 1
+        elif res.modified_count:
+            updated += 1
+
+    await db.uploads.insert_one({
+        "filename": filename,
+        "source": source,
+        "rows_total": len(rows),
+        "inserted": inserted,
+        "updated": updated,
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "by": user["email"],
+    })
+    return {"source": source, "rows_total": len(rows), "inserted": inserted, "updated": updated}
+
+
+@api.post("/uploads/costs")
+async def upload_costs(file: UploadFile = File(...), user=Depends(get_current_user)):
+    content = await file.read()
+    rows = parse_cost_file(content, file.filename or "")
+    if not rows:
+        raise HTTPException(status_code=400, detail="No valid cost rows found. Ensure 'sku' and 'cost_per_unit' columns exist.")
+    inserted, updated = 0, 0
+    for r in rows:
+        r["updated_at"] = datetime.now(timezone.utc).isoformat()
+        res = await db.costs.update_one({"sku": r["sku"]}, {"$set": r}, upsert=True)
+        if res.upserted_id:
+            inserted += 1
+        else:
+            updated += 1
+    await db.uploads.insert_one({
+        "filename": file.filename,
+        "source": "costs",
+        "rows_total": len(rows),
+        "inserted": inserted,
+        "updated": updated,
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "by": user["email"],
+    })
+    return {"rows_total": len(rows), "inserted": inserted, "updated": updated}
+
+
+@api.get("/uploads/history")
+async def uploads_history(user=Depends(get_current_user)):
+    docs = await db.uploads.find({}, {"_id": 0}).sort("uploaded_at", -1).to_list(100)
+    return docs
+
+
+# ------------------- COSTS -------------------
+@api.get("/costs")
+async def list_costs(user=Depends(get_current_user)):
+    docs = await db.costs.find({}, {"_id": 0}).sort("sku", 1).to_list(5000)
+    return docs
+
+
+@api.post("/costs/manual")
+async def manual_cost(payload: CostManualIn, user=Depends(get_current_user)):
+    doc = payload.model_dump()
+    doc["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.costs.update_one({"sku": payload.sku}, {"$set": doc}, upsert=True)
+    return {"ok": True}
+
+
+@api.delete("/costs/{sku}")
+async def delete_cost(sku: str, user=Depends(get_current_user)):
+    await db.costs.delete_one({"sku": sku})
+    return {"ok": True}
+
+
+# ------------------- EXCHANGE RATES -------------------
+@api.get("/exchange-rates")
+async def get_exchange_rates(user=Depends(get_current_user)):
+    return await get_rates()
+
+
+@api.put("/exchange-rates")
+async def update_exchange_rates(payload: ExchangeRateUpdate, user=Depends(get_current_user)):
+    rates = {k.upper(): float(v) for k, v in payload.rates.items()}
+    rates["EUR"] = 1.0
+    await db.settings.update_one({"_id": "exchange_rates"}, {"$set": {"rates": rates}}, upsert=True)
+    # Recompute EUR amounts on all orders
+    async for o in db.orders.find({}, {"_id": 1, "line_total": 1, "shipping_cost": 1, "currency": 1}):
+        await db.orders.update_one(
+            {"_id": o["_id"]},
+            {"$set": {
+                "line_total_eur": to_eur(o.get("line_total", 0), o.get("currency", "EUR"), rates),
+                "shipping_cost_eur": to_eur(o.get("shipping_cost", 0), o.get("currency", "EUR"), rates),
+            }},
+        )
+    return rates
+
+
+# ------------------- FILTER HELPER -------------------
+def build_match(date_from: Optional[str], date_to: Optional[str], marketplaces: Optional[List[str]], sku: Optional[str]):
+    m: Dict[str, Any] = {}
+    if date_from or date_to:
+        m["order_date_iso"] = {}
+        if date_from:
+            m["order_date_iso"]["$gte"] = date_from
+        if date_to:
+            m["order_date_iso"]["$lte"] = date_to + "T23:59:59"
+    if marketplaces:
+        m["marketplace"] = {"$in": marketplaces}
+    if sku:
+        m["sku"] = {"$regex": re.escape(sku), "$options": "i"}
+    return m
+
+
+def parse_list(q: Optional[str]) -> Optional[List[str]]:
+    if not q:
+        return None
+    return [s.strip() for s in q.split(",") if s.strip()]
+
+
+# ------------------- DASHBOARD -------------------
+@api.get("/dashboard/summary")
+async def dashboard_summary(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    marketplaces: Optional[str] = None,
+    sku: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    pipeline = [{"$match": match}] if match else []
+    pipeline += [{
+        "$group": {
+            "_id": None,
+            "revenue_eur": {"$sum": "$line_total_eur"},
+            "shipping_eur": {"$sum": "$shipping_cost_eur"},
+            "orders": {"$addToSet": "$order_id"},
+            "units": {"$sum": "$quantity"},
+            "lines": {"$sum": 1},
+        }
+    }]
+    res = await db.orders.aggregate(pipeline).to_list(1)
+    if not res:
+        return {"revenue_eur": 0, "shipping_eur": 0, "orders": 0, "units": 0, "lines": 0, "aov_eur": 0, "cogs_eur": 0, "margin_eur": 0, "margin_pct": 0}
+    r = res[0]
+    revenue = float(r["revenue_eur"] or 0)
+    shipping = float(r["shipping_eur"] or 0)
+    orders_count = len(r["orders"])
+    units = int(r["units"] or 0)
+    lines = int(r["lines"] or 0)
+    aov = revenue / orders_count if orders_count else 0
+
+    # COGS via per-sku cost lookup
+    costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({}, {"_id": 0})}
+    rates = await get_rates()
+    cogs = 0.0
+    if costs_map:
+        async for o in db.orders.find(match, {"sku": 1, "quantity": 1, "currency": 1}):
+            c = costs_map.get(o.get("sku"))
+            if c:
+                cogs += to_eur((c["cost_per_unit"] + c.get("shipping_cost", 0)) * o["quantity"], c.get("currency", "EUR"), rates)
+    margin = revenue - cogs - shipping
+    margin_pct = (margin / revenue * 100) if revenue else 0
+    return {
+        "revenue_eur": round(revenue, 2),
+        "shipping_eur": round(shipping, 2),
+        "orders": orders_count,
+        "units": units,
+        "lines": lines,
+        "aov_eur": round(aov, 2),
+        "cogs_eur": round(cogs, 2),
+        "margin_eur": round(margin, 2),
+        "margin_pct": round(margin_pct, 2),
+    }
+
+
+@api.get("/dashboard/trend")
+async def dashboard_trend(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    marketplaces: Optional[str] = None,
+    sku: Optional[str] = None,
+    granularity: str = Query("day", pattern="^(day|month)$"),
+    user=Depends(get_current_user),
+):
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    match["order_date_iso"] = match.get("order_date_iso", {})
+    match["order_date_iso"]["$ne"] = None
+    if match["order_date_iso"] == {"$ne": None}:
+        pass
+    fmt = "%Y-%m-%d" if granularity == "day" else "%Y-%m"
+    pipeline = [
+        {"$match": {**match, "order_date_iso": {**match.get("order_date_iso", {}), "$ne": None}}},
+        {"$addFields": {"order_dt": {"$dateFromString": {"dateString": "$order_date_iso", "onError": None}}}},
+        {"$match": {"order_dt": {"$ne": None}}},
+        {"$group": {
+            "_id": {"period": {"$dateToString": {"format": fmt, "date": "$order_dt"}}, "marketplace": "$marketplace"},
+            "revenue": {"$sum": "$line_total_eur"},
+            "orders": {"$addToSet": "$order_id"},
+            "units": {"$sum": "$quantity"},
+        }},
+        {"$sort": {"_id.period": 1}},
+    ]
+    rows = await db.orders.aggregate(pipeline).to_list(10000)
+    out: Dict[str, dict] = {}
+    for r in rows:
+        period = r["_id"]["period"]
+        mk = r["_id"]["marketplace"]
+        if period not in out:
+            out[period] = {"period": period, "revenue_total": 0, "by_marketplace": {}, "orders_total": 0, "units_total": 0}
+        out[period]["by_marketplace"][mk] = round(float(r["revenue"] or 0), 2)
+        out[period]["revenue_total"] += float(r["revenue"] or 0)
+        out[period]["orders_total"] += len(r["orders"])
+        out[period]["units_total"] += int(r["units"] or 0)
+    series = sorted(out.values(), key=lambda x: x["period"])
+    for s in series:
+        s["revenue_total"] = round(s["revenue_total"], 2)
+    return series
+
+
+@api.get("/dashboard/marketplace-breakdown")
+async def marketplace_breakdown(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    marketplaces: Optional[str] = None,
+    sku: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    pipeline = [
+        {"$match": match} if match else {"$match": {}},
+        {"$group": {
+            "_id": "$marketplace",
+            "revenue": {"$sum": "$line_total_eur"},
+            "shipping": {"$sum": "$shipping_cost_eur"},
+            "units": {"$sum": "$quantity"},
+            "orders": {"$addToSet": "$order_id"},
+        }},
+        {"$sort": {"revenue": -1}},
+    ]
+    rows = await db.orders.aggregate(pipeline).to_list(100)
+    return [{
+        "marketplace": r["_id"] or "Unknown",
+        "revenue_eur": round(float(r["revenue"] or 0), 2),
+        "shipping_eur": round(float(r["shipping"] or 0), 2),
+        "units": int(r["units"] or 0),
+        "orders": len(r["orders"]),
+        "aov_eur": round(float(r["revenue"] or 0) / len(r["orders"]), 2) if r["orders"] else 0,
+    } for r in rows]
+
+
+@api.get("/dashboard/top-skus")
+async def top_skus(
+    limit: int = 25,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    marketplaces: Optional[str] = None,
+    sku: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    pipeline = [
+        {"$match": match} if match else {"$match": {}},
+        {"$group": {
+            "_id": "$sku",
+            "product_name": {"$first": "$product_name"},
+            "revenue": {"$sum": "$line_total_eur"},
+            "units": {"$sum": "$quantity"},
+            "orders": {"$addToSet": "$order_id"},
+        }},
+        {"$sort": {"revenue": -1}},
+        {"$limit": limit},
+    ]
+    rows = await db.orders.aggregate(pipeline).to_list(limit)
+    costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({}, {"_id": 0})}
+    rates = await get_rates()
+    out = []
+    for r in rows:
+        sku_id = r["_id"]
+        c = costs_map.get(sku_id)
+        units = int(r["units"] or 0)
+        revenue = float(r["revenue"] or 0)
+        cogs = 0
+        if c:
+            cogs = to_eur((c["cost_per_unit"] + c.get("shipping_cost", 0)) * units, c.get("currency", "EUR"), rates)
+        margin = revenue - cogs
+        out.append({
+            "sku": sku_id,
+            "product_name": r["product_name"] or "",
+            "revenue_eur": round(revenue, 2),
+            "units": units,
+            "orders": len(r["orders"]),
+            "cogs_eur": round(cogs, 2),
+            "margin_eur": round(margin, 2),
+            "margin_pct": round((margin / revenue * 100) if revenue else 0, 2),
+            "has_cost": bool(c),
+        })
+    return out
+
+
+@api.get("/dashboard/customers")
+async def customers_analytics(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    marketplaces: Optional[str] = None,
+    sku: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    pipeline = [
+        {"$match": match} if match else {"$match": {}},
+        {"$group": {
+            "_id": "$country",
+            "revenue": {"$sum": "$line_total_eur"},
+            "orders": {"$addToSet": "$order_id"},
+            "units": {"$sum": "$quantity"},
+        }},
+        {"$sort": {"revenue": -1}},
+    ]
+    rows = await db.orders.aggregate(pipeline).to_list(200)
+    return [{
+        "country": (r["_id"] or "Unknown") or "Unknown",
+        "revenue_eur": round(float(r["revenue"] or 0), 2),
+        "orders": len(r["orders"]),
+        "units": int(r["units"] or 0),
+    } for r in rows]
+
+
+@api.get("/dashboard/heatmap")
+async def heatmap(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    marketplaces: Optional[str] = None,
+    sku: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    pipeline = [
+        {"$match": {**match, "order_date_iso": {"$ne": None}}},
+        {"$addFields": {"order_dt": {"$dateFromString": {"dateString": "$order_date_iso", "onError": None}}}},
+        {"$match": {"order_dt": {"$ne": None}}},
+        {"$group": {
+            "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$order_dt"}},
+            "revenue": {"$sum": "$line_total_eur"},
+            "orders": {"$addToSet": "$order_id"},
+            "units": {"$sum": "$quantity"},
+        }},
+        {"$sort": {"_id": 1}},
+    ]
+    rows = await db.orders.aggregate(pipeline).to_list(2000)
+    return [{
+        "date": r["_id"],
+        "revenue_eur": round(float(r["revenue"] or 0), 2),
+        "orders": len(r["orders"]),
+        "units": int(r["units"] or 0),
+    } for r in rows]
+
+
+@api.get("/dashboard/profit-loss")
+async def profit_loss(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    marketplaces: Optional[str] = None,
+    sku: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({}, {"_id": 0})}
+    rates = await get_rates()
+    pipeline = [
+        {"$match": match} if match else {"$match": {}},
+        {"$group": {
+            "_id": "$marketplace",
+            "revenue": {"$sum": "$line_total_eur"},
+            "shipping": {"$sum": "$shipping_cost_eur"},
+            "vat": {"$sum": "$vat"},
+            "units": {"$sum": "$quantity"},
+            "orders": {"$addToSet": "$order_id"},
+        }},
+    ]
+    base = await db.orders.aggregate(pipeline).to_list(100)
+    # compute COGS per marketplace
+    cogs_per_mk: Dict[str, float] = {}
+    async for o in db.orders.find(match, {"sku": 1, "quantity": 1, "marketplace": 1, "currency": 1}):
+        c = costs_map.get(o.get("sku"))
+        if c:
+            v = to_eur((c["cost_per_unit"] + c.get("shipping_cost", 0)) * o["quantity"], c.get("currency", "EUR"), rates)
+            cogs_per_mk[o["marketplace"]] = cogs_per_mk.get(o["marketplace"], 0) + v
+    out = []
+    for r in base:
+        mk = r["_id"] or "Unknown"
+        rev = float(r["revenue"] or 0)
+        ship = float(r["shipping"] or 0)
+        cogs = cogs_per_mk.get(mk, 0)
+        net = rev - cogs - ship
+        out.append({
+            "marketplace": mk,
+            "revenue_eur": round(rev, 2),
+            "cogs_eur": round(cogs, 2),
+            "shipping_eur": round(ship, 2),
+            "vat_eur": round(float(r["vat"] or 0), 2),
+            "net_profit_eur": round(net, 2),
+            "margin_pct": round((net / rev * 100) if rev else 0, 2),
+            "units": int(r["units"] or 0),
+            "orders": len(r["orders"]),
+        })
+    out.sort(key=lambda x: x["revenue_eur"], reverse=True)
+    return out
+
+
+# ------------------- ORDERS LIST + EXPORT -------------------
+@api.get("/orders")
+async def list_orders(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    marketplaces: Optional[str] = None,
+    sku: Optional[str] = None,
+    limit: int = 100,
+    skip: int = 0,
+    user=Depends(get_current_user),
+):
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    cursor = db.orders.find(match, {"_id": 0}).sort("order_date_iso", -1).skip(skip).limit(min(limit, 500))
+    docs = await cursor.to_list(min(limit, 500))
+    total = await db.orders.count_documents(match)
+    return {"total": total, "items": docs}
+
+
+@api.get("/orders/export")
+async def export_orders(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    marketplaces: Optional[str] = None,
+    sku: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    fields = [
+        "order_date_iso", "marketplace", "channel_raw", "order_id", "sku", "product_name",
+        "quantity", "unit_price", "line_total", "currency", "line_total_eur",
+        "shipping_cost", "shipping_cost_eur", "vat", "status", "country", "city", "customer_email", "source",
+    ]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(fields)
+    async for o in db.orders.find(match, {f: 1 for f in fields}):
+        w.writerow([o.get(f, "") for f in fields])
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=orders_export.csv"},
+    )
+
+
+@api.get("/marketplaces")
+async def list_marketplaces(user=Depends(get_current_user)):
+    mks = await db.orders.distinct("marketplace")
+    return sorted([m for m in mks if m])
+
+
+@api.get("/skus")
+async def list_skus(user=Depends(get_current_user), limit: int = 500):
+    pipeline = [
+        {"$group": {"_id": "$sku", "product_name": {"$first": "$product_name"}, "units": {"$sum": "$quantity"}}},
+        {"$sort": {"units": -1}},
+        {"$limit": limit},
+    ]
+    rows = await db.orders.aggregate(pipeline).to_list(limit)
+    return [{"sku": r["_id"], "product_name": r["product_name"] or "", "units": int(r["units"] or 0)} for r in rows]
+
+
+@api.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"app": "Ambiance Analytics Hub", "status": "ok"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
-
-# Include the router in the main app
-app.include_router(api_router)
+# Register router and CORS
+app.include_router(api)
 
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()

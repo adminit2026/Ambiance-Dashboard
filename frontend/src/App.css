@@ -1,34 +1,103 @@
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+/* Ambiance Analytics Hub — Swiss/High-Contrast Theme */
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap");
+@import url("https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@700,800,500,400&display=swap");
+
+:root {
+  --ink: #111215;
+  --ink-soft: #2D313A;
+  --muted: #5E636E;
+  --line: #E5E7EB;
+  --line-dark: #2D313A;
+  --bg-app: #F7F7F8;
+  --bg-surface: #FFFFFF;
+  --bg-sidebar: #111215;
+  --accent: #0055FF;
+  --accent-hover: #0044CC;
+  --pos: #00A859;
+  --pos-bg: #E5F6EE;
+  --neg: #FF2A2A;
+  --neg-bg: #FFEAEA;
+  --warn: #FF9900;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
-    }
+html, body, #root { background: var(--bg-app); color: var(--ink); }
+
+body {
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
 }
 
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+.font-display { font-family: "Cabinet Grotesk", "IBM Plex Sans", sans-serif; letter-spacing: -0.02em; }
+.font-mono-num { font-family: "IBM Plex Mono", "IBM Plex Sans", monospace; font-variant-numeric: tabular-nums; }
+
+/* Sharp surfaces */
+.surface {
+  background: var(--bg-surface);
+  border: 1px solid var(--line);
+}
+.surface-flush + .surface-flush { border-top: 0; }
+
+/* Grid Borders Section */
+.grid-borders > * { border: 1px solid var(--line); background: white; }
+.grid-borders { gap: 0; }
+.grid-borders > * + * { border-left: 0; }
+
+/* Sidebar */
+.sidebar { background: var(--bg-sidebar); color: white; }
+.sidebar a { color: rgba(255,255,255,0.7); }
+.sidebar a:hover { color: white; }
+.sidebar a.active {
+  color: white;
+  background: rgba(255,255,255,0.06);
+  border-left: 2px solid var(--accent);
 }
 
-.App-link {
-    color: #61dafb;
-}
+/* KPI */
+.kpi-value { font-family: "Cabinet Grotesk", sans-serif; font-weight: 500; letter-spacing: -0.04em; }
 
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
-    }
+/* Tables */
+table.dense th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; background: #FAFAFB; border-bottom: 1px solid var(--line); padding: 10px 12px; text-align: left; }
+table.dense td { padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--ink); }
+table.dense tr:hover td { background: #FAFAFB; }
+
+/* Recharts tweaks */
+.recharts-tooltip-wrapper { outline: none; }
+.recharts-default-tooltip { border: 1px solid var(--line) !important; box-shadow: none !important; border-radius: 0 !important; padding: 8px 12px !important; }
+
+/* Custom file dropzone */
+.dropzone {
+  border: 1.5px dashed var(--line);
+  background: white;
+  transition: border-color 150ms ease-out, background 150ms ease-out;
 }
+.dropzone:hover, .dropzone.drag-over { border-color: var(--accent); background: #F2F7FF; }
+
+/* Heatmap cells */
+.heat-cell { width: 12px; height: 12px; display: inline-block; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #D5D7DC; }
+::-webkit-scrollbar-thumb:hover { background: #B5B8BF; }
+
+/* Buttons override (sharp corners) */
+.btn-primary { background: var(--accent); color: white; padding: 10px 18px; font-size: 13px; font-weight: 500; transition: background 150ms ease-out; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-secondary { background: white; color: var(--ink); padding: 10px 18px; font-size: 13px; font-weight: 500; border: 1px solid var(--line); transition: background 150ms ease-out; }
+.btn-secondary:hover { background: #FAFAFB; }
+
+/* Inputs */
+.in {
+  background: white; border: 1px solid var(--line); padding: 8px 10px; font-size: 13px; color: var(--ink);
+  outline: none; transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
+}
+.in:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+/* Section label */
+.eyebrow { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+/* Pill */
+.pill { display:inline-flex; align-items:center; gap: 6px; padding: 2px 8px; font-size: 11px; font-weight: 500; border: 1px solid var(--line); background: white; }
+.pill.pos { color: var(--pos); background: var(--pos-bg); border-color: transparent; }
+.pill.neg { color: var(--neg); background: var(--neg-bg); border-color: transparent; }

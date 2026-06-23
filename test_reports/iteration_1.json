@@ -1,0 +1,39 @@
+{
+  "summary": "Comprehensive backend + frontend testing of Ambiance Analytics Hub. All 28 backend pytest cases passed (auth, uploads idempotency, dashboard aggregations, orders list/export, exchange rates with EUR recompute, manual costs). Full UI E2E run via Playwright also passed: invalid+valid login, sidebar navigation across all 9 pages, orders CSV download, exchange rate save/revert, manual cost insert with confirmation in catalog, file-input cost upload reflected in upload history, and logout redirect to /login.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/dashboard/trend", "issue": "Defensive code at lines 697-700 has a no-op 'if/pass' block (dead code). The inner $match in pipeline already handles it. Cosmetic only."},
+      {"endpoint": "/api/dashboard/summary", "issue": "COGS computed by iterating cursor and re-fetching every order in Python (line 668). For large datasets this is O(N); should use $lookup/aggregate. Works for current ~7k rows."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_api.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is ~1000 lines — consider splitting into routers/auth.py, routers/uploads.py, routers/dashboard.py, services/parsers.py for maintainability.",
+    "PUT /api/exchange-rates recomputes line_total_eur with per-document update_one in a loop (one round-trip per order). For 7k+ orders this is slow; use bulk_write with UpdateOne operations.",
+    "Cost lookup in summary/top-skus/profit-loss loads ALL costs into memory each call (costs_map dict). Fine now but should be cached or joined via $lookup.",
+    "build_match always sets order_date_iso $gte/$lte as ISO date strings — works because data stored as ISO strings, but mixing string compare with $ne None checks (lines 697-705) is fragile. Trend pipeline relies on $dateFromString fallback if order_date_iso is null.",
+    "CORS allow_origins falls back to '*' with allow_credentials=True — browsers reject this combo. Set CORS_ORIGINS explicitly in production.",
+    "No rate limiting / brute-force lockout on /api/auth/login (playbook calls for lockout after 5 fails)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (new)",
+    "/app/backend/tests/test_api.py (new)"
+  ],
+  "success_rate": {"backend": "100% (28/28)", "frontend": "100% (all flows passed)"},
+  "test_credentials": "admin@ambiancesticker.com / Ambiance2026! (from /app/memory/test_credentials.md, verified working)",
+  "seed_data_creation": "Tests upload /app/sample_data/{channelengine.csv, beezup.xlsx, amazon_po.xls}. ChannelEngine re-upload verified idempotent (inserted=0). Test cost SKUs (TEST_SKU_001/002/MANUAL_001/UI_SKU_001) created and cleaned up.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression suite at /app/backend/tests/test_api.py runs in ~13s and exercises every documented endpoint. To re-run: `cd /app/backend/tests && pytest test_api.py -v`. Sample data lives in /app/sample_data. Note: the idempotency test asserts inserted==0 on re-upload, so it relies on the previous test having inserted rows first (same test session)."
+}
