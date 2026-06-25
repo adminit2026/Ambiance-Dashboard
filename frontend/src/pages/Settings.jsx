@@ -2,27 +2,29 @@ import { useEffect, useState } from "react";
 import PageHeader from "@/components/PageHeader";
 import api, { formatApiError } from "@/lib/api";
 import { toast } from "sonner";
-import { fmtDate, fmtEur } from "@/lib/format";
+import { fmtDate } from "@/lib/format";
+import { useT } from "@/lib/i18n";
 import { Trash2 } from "lucide-react";
 
 export default function Settings() {
+  const { t } = useT();
   const [rates, setRates] = useState({});
   const [draftRates, setDraftRates] = useState({});
   const [costs, setCosts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [manual, setManual] = useState({ sku: "", cost_per_unit: "", shipping_cost: "", currency: "EUR" });
+  const [marketplaces, setMarketplaces] = useState([]);
+  const [constants, setConstants] = useState({ operational_cost_per_unit: 0.5, production_shipping_by_marketplace: {} });
 
-  const loadRates = () =>
-    api.get("/exchange-rates").then((r) => {
-      setRates(r.data);
-      setDraftRates(r.data);
-    });
+  const loadRates = () => api.get("/exchange-rates").then((r) => { setRates(r.data); setDraftRates(r.data); });
   const loadCosts = () => api.get("/costs").then((r) => setCosts(r.data));
+  const loadMks = () => api.get("/marketplaces").then((r) => setMarketplaces(r.data));
+  const loadConstants = () => api.get("/cost-constants").then((r) => setConstants({
+    operational_cost_per_unit: r.data.operational_cost_per_unit ?? 0.5,
+    production_shipping_by_marketplace: r.data.production_shipping_by_marketplace || {},
+  }));
 
-  useEffect(() => {
-    loadRates();
-    loadCosts();
-  }, []);
+  useEffect(() => { loadRates(); loadCosts(); loadMks(); loadConstants(); }, []);
 
   const saveRates = async () => {
     setBusy(true);
@@ -33,14 +35,31 @@ export default function Settings() {
         if (!isNaN(n) && n > 0) parsed[k] = n;
       });
       const { data } = await api.put("/exchange-rates", { rates: parsed });
-      setRates(data);
-      setDraftRates(data);
+      setRates(data); setDraftRates(data);
       toast.success("Exchange rates updated — order totals recomputed");
     } catch (e) {
       toast.error(formatApiError(e.response?.data?.detail) || "Failed");
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
+  };
+
+  const saveConstants = async () => {
+    setBusy(true);
+    try {
+      const op = Number(constants.operational_cost_per_unit) || 0;
+      const ship = {};
+      Object.entries(constants.production_shipping_by_marketplace).forEach(([k, v]) => {
+        const n = Number(v);
+        if (!isNaN(n) && n >= 0) ship[k] = n;
+      });
+      const { data } = await api.put("/cost-constants", {
+        operational_cost_per_unit: op,
+        production_shipping_by_marketplace: ship,
+      });
+      setConstants(data);
+      toast.success("Cost constants saved");
+    } catch (e) {
+      toast.error(formatApiError(e.response?.data?.detail) || "Failed");
+    } finally { setBusy(false); }
   };
 
   const saveManual = async (e) => {
@@ -59,9 +78,7 @@ export default function Settings() {
       loadCosts();
     } catch (e) {
       toast.error(formatApiError(e.response?.data?.detail) || "Failed");
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   };
 
   const deleteCost = async (sku) => {
@@ -77,21 +94,77 @@ export default function Settings() {
       toast.success(`Re-normalized ${data.updated} orders`);
     } catch (e) {
       toast.error(formatApiError(e.response?.data?.detail) || "Failed");
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   };
 
   return (
     <div>
-      <PageHeader kicker="Configuration" title="Settings" />
+      <PageHeader kicker={t("settings.kicker")} title={t("settings.title")} />
 
       <section className="px-8 py-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="surface p-6">
-          <div className="eyebrow">Currency conversion</div>
-          <h3 className="font-display text-xl font-semibold mt-1 mb-1">Exchange rates → EUR</h3>
-          <p className="text-sm text-[#5E636E] mb-4">All revenue is normalized to EUR using these rates. EUR is fixed at 1.0.</p>
-          <div className="space-y-2" data-testid="exchange-rates-list">
+          <div className="eyebrow">{t("settings.cost_constants")}</div>
+          <h3 className="font-display text-xl font-semibold mt-1 mb-1">{t("settings.cost_constants_sub")}</h3>
+          <p className="text-sm text-[#5E636E] mb-4">
+            These constants are applied to every order line in <strong>{t("pnl.title")}</strong> and the <strong>{t("library.title")}</strong>.
+          </p>
+
+          <div className="mb-5">
+            <label className="eyebrow block mb-2">{t("settings.op_cost")}</label>
+            <input
+              type="number"
+              step="0.01"
+              className="in w-40"
+              value={constants.operational_cost_per_unit}
+              onChange={(e) => setConstants({ ...constants, operational_cost_per_unit: e.target.value })}
+              data-testid="op-cost-input"
+            />
+            <span className="text-xs text-[#5E636E] ml-3">per unit, applied to every product</span>
+          </div>
+
+          <label className="eyebrow block mb-2">{t("settings.prod_shipping_mk")}</label>
+          <div className="space-y-2 max-h-[260px] overflow-y-auto" data-testid="prod-shipping-list">
+            {marketplaces.length === 0 && (
+              <div className="text-xs text-[#5E636E]">Upload orders first to populate marketplaces.</div>
+            )}
+            {marketplaces.map((mk) => (
+              <div key={mk} className="flex items-center gap-3">
+                <div className="w-44 text-sm">{mk}</div>
+                <input
+                  type="number"
+                  step="0.01"
+                  className="in w-32"
+                  placeholder="0.00"
+                  value={constants.production_shipping_by_marketplace[mk] ?? ""}
+                  onChange={(e) => setConstants({
+                    ...constants,
+                    production_shipping_by_marketplace: {
+                      ...constants.production_shipping_by_marketplace,
+                      [mk]: e.target.value,
+                    },
+                  })}
+                  data-testid={`prod-shipping-${mk}`}
+                />
+                <span className="text-xs text-[#5E636E]">EUR / unit</span>
+              </div>
+            ))}
+          </div>
+
+          <button
+            onClick={saveConstants}
+            disabled={busy}
+            className="btn-primary mt-5"
+            data-testid="save-constants-button"
+          >
+            {t("settings.save_constants")}
+          </button>
+        </div>
+
+        <div className="surface p-6">
+          <div className="eyebrow">{t("settings.fx")}</div>
+          <h3 className="font-display text-xl font-semibold mt-1 mb-1">{t("settings.fx_subtitle")}</h3>
+          <p className="text-sm text-[#5E636E] mb-4">{t("settings.fx_help")}</p>
+          <div className="space-y-2 max-h-[300px] overflow-y-auto" data-testid="exchange-rates-list">
             {Object.entries(draftRates).sort().map(([k, v]) => (
               <div key={k} className="flex items-center gap-3">
                 <div className="w-16 font-mono-num text-sm">{k}</div>
@@ -109,7 +182,7 @@ export default function Settings() {
             ))}
           </div>
           <div className="mt-5 flex gap-2">
-            <button onClick={saveRates} disabled={busy} className="btn-primary" data-testid="save-rates-button">Save & recompute</button>
+            <button onClick={saveRates} disabled={busy} className="btn-primary" data-testid="save-rates-button">{t("settings.fx_save")}</button>
             <button
               onClick={() => {
                 const k = prompt("Currency ISO code (e.g. CAD)")?.toUpperCase();
@@ -117,13 +190,15 @@ export default function Settings() {
               }}
               className="btn-secondary"
               data-testid="add-currency-button"
-            >+ Add currency</button>
+            >{t("settings.add_currency")}</button>
           </div>
         </div>
+      </section>
 
+      <section className="px-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="surface p-6">
-          <div className="eyebrow">Manual cost entry</div>
-          <h3 className="font-display text-xl font-semibold mt-1 mb-4">Add or update per-SKU cost</h3>
+          <div className="eyebrow">{t("settings.manual_cost")}</div>
+          <h3 className="font-display text-xl font-semibold mt-1 mb-4">{t("settings.manual_cost_sub")}</h3>
           <form onSubmit={saveManual} className="space-y-3" data-testid="manual-cost-form">
             <input className="in w-full" placeholder="SKU" value={manual.sku} onChange={(e) => setManual({ ...manual, sku: e.target.value })} data-testid="manual-cost-sku" required />
             <div className="grid grid-cols-2 gap-3">
@@ -131,37 +206,34 @@ export default function Settings() {
               <input className="in w-full" type="number" step="0.01" placeholder="Shipping cost (opt)" value={manual.shipping_cost} onChange={(e) => setManual({ ...manual, shipping_cost: e.target.value })} data-testid="manual-cost-shipping" />
             </div>
             <input className="in w-full" placeholder="Currency (default EUR)" value={manual.currency} onChange={(e) => setManual({ ...manual, currency: e.target.value })} data-testid="manual-cost-currency" />
-            <button className="btn-primary w-full" disabled={busy} data-testid="manual-cost-save">Save cost</button>
+            <button className="btn-primary w-full" disabled={busy} data-testid="manual-cost-save">{t("settings.save_cost")}</button>
           </form>
+        </div>
 
-          <div className="mt-8 pt-6 border-t border-[#E5E7EB]">
-            <div className="eyebrow">Marketplace labels</div>
-            <h4 className="font-display text-base font-semibold mt-1 mb-2">Re-normalize existing orders</h4>
-            <p className="text-xs text-[#5E636E] mb-3">
-              Re-applies the latest channel→marketplace mapping (CDiscount, Maison, Castorama, Maxeda - NL/BE,
-              PinkConnect Veepee - FR/BE/NL, BOL.COM, Ambiance Web, etc.) to every existing order.
-            </p>
-            <button onClick={renormalize} disabled={busy} className="btn-secondary" data-testid="renormalize-button">
-              Re-normalize marketplaces
-            </button>
-          </div>
+        <div className="surface p-6">
+          <div className="eyebrow">{t("settings.renormalize")}</div>
+          <h3 className="font-display text-xl font-semibold mt-1 mb-2">Marketplace labels</h3>
+          <p className="text-sm text-[#5E636E] mb-4">{t("settings.renormalize_sub")}</p>
+          <button onClick={renormalize} disabled={busy} className="btn-secondary" data-testid="renormalize-button">
+            {t("settings.renormalize")}
+          </button>
         </div>
       </section>
 
-      <section className="px-8 pb-12">
+      <section className="px-8 py-6">
         <div className="surface p-6">
-          <div className="eyebrow">Cost catalog</div>
+          <div className="eyebrow">{t("settings.cost_catalog")}</div>
           <h3 className="font-display text-xl font-semibold mt-1 mb-4">{costs.length} SKUs with cost</h3>
           {costs.length === 0 ? (
-            <div className="text-sm text-[#5E636E]">No costs yet. Upload a cost file in <strong>Uploads</strong> or use the manual entry form above.</div>
+            <div className="text-sm text-[#5E636E]">No costs yet. Upload a cost file in <strong>{t("nav.uploads")}</strong>.</div>
           ) : (
             <div className="max-h-[420px] overflow-y-auto">
               <table className="dense w-full" data-testid="costs-catalog">
                 <thead>
-                  <tr><th>SKU</th><th>Product</th><th className="text-right">Cost / unit</th><th className="text-right">Shipping</th><th>Currency</th><th>Updated</th><th></th></tr>
+                  <tr><th>SKU</th><th>Product</th><th className="text-right">Cost / unit</th><th className="text-right">Shipping</th><th>{t("common.currency")}</th><th>{t("common.updated")}</th><th></th></tr>
                 </thead>
                 <tbody>
-                  {costs.map((c) => (
+                  {costs.slice(0, 200).map((c) => (
                     <tr key={c.sku}>
                       <td className="font-mono-num">{c.sku}</td>
                       <td className="max-w-[320px] truncate" title={c.product_name}>{c.product_name || "—"}</td>
@@ -174,6 +246,7 @@ export default function Settings() {
                   ))}
                 </tbody>
               </table>
+              {costs.length > 200 && <div className="text-xs text-[#5E636E] mt-3">Showing 200 of {costs.length} SKUs. Use Library for full view.</div>}
             </div>
           )}
         </div>
