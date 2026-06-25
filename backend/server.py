@@ -669,6 +669,28 @@ async def on_startup():
 
     await get_rates()
 
+    # Auto-renormalize marketplaces on startup so any legacy/un-normalized rows are merged
+    # into their canonical labels (e.g. MAISONDUMONDE → Maison, cdiscount → CDiscount).
+    # Idempotent: no-op if everything is already canonical.
+    try:
+        from pymongo import UpdateOne
+        bulk = []
+        changed = 0
+        async for o in db.orders.find({}, {"_id": 1, "channel_raw": 1, "marketplace": 1}):
+            new_mk = channel_to_marketplace(o.get("channel_raw") or o.get("marketplace") or "")
+            if new_mk != o.get("marketplace"):
+                bulk.append(UpdateOne({"_id": o["_id"]}, {"$set": {"marketplace": new_mk}}))
+                changed += 1
+            if len(bulk) >= 500:
+                await db.orders.bulk_write(bulk, ordered=False)
+                bulk = []
+        if bulk:
+            await db.orders.bulk_write(bulk, ordered=False)
+        if changed:
+            logger.info("Startup renormalize: merged %d orders into canonical marketplaces", changed)
+    except Exception as e:
+        logger.warning("Startup renormalize skipped: %s", e)
+
 
 @app.on_event("shutdown")
 async def on_shutdown():
