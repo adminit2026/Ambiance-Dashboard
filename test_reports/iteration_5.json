@@ -1,0 +1,42 @@
+{
+  "summary": "RETEST after fix to apply_asin_mapping (line_key no longer rewritten). All 9 iteration-4 tests pass. All 10 iteration-3 regression tests pass. Idempotency bug is fully fixed: amazon_po.xls re-upload after applying a mapping returns inserted=0 and total Amazon orders stay at exactly 6,580. /api/orders?sku=<merchant_sku> finds remapped orders with asin field preserved and line_key matching ::B[0-9A-Z]{9}. Feature also verified end-to-end with a fresh ASIN (B0DJMM6J4L): first upload reported orders_remapped=14, second idempotent upload reported orders_remapped=0. Cost parser still works on both cost_v2.xlsx and cost_prod.xlsx.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/uploads/asin-mapping", "issue": "orders_remapped is correctly 0 on re-upload of an already-applied mapping (idempotent). Test was tightened to only enforce >=1 when inserted=1 (fresh mapping)."},
+      {"endpoint": "DELETE /api/asin-mappings/{asin}", "issue": "No DELETE endpoint exposed — to clean up a single mapping (e.g. in tests) the DB must be touched directly. Consider exposing an admin DELETE."},
+      {"endpoint": "GET /api/orders", "issue": "(Carry-over from iter 4) Still no 'source' query filter — must use marketplaces='Amazon Vendor' to count Amazon PO orders."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/backend/tests/test_iteration3.py",
+    "/app/test_reports/pytest/iteration5_results.xml",
+    "/app/test_reports/pytest/iteration5_regression_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Add DELETE /api/asin-mappings/{asin} for clean management/test teardown.",
+    "(Carry-over) Add 'source' query param to GET /api/orders for filtering by amazon_po / channelengine / beezup.",
+    "(Carry-over from iter 3/4) server.py is 1,500 lines — split into routers/parsers modules.",
+    "(Carry-over from iter 3) PUT /api/cost-constants has no admin-role check.",
+    "(Carry-over from iter 4) POST /api/uploads/asin-mapping has no admin-role check — any authenticated user can rewrite the entire ASIN mapping."
+  ],
+  "critical_code_review_comments": [
+    "apply_asin_mapping (server.py:413-423) now correctly updates only sku, NEVER line_key — matches the invariant in _remap_amazon_orders' docstring. Bug fix is clean.",
+    "_remap_amazon_orders already uses bulk_write batches of 500 — good (iter-4 review comment is resolved).",
+    "Still no DELETE/PATCH for individual asin_mappings — only bulk upload via CSV/XLSX.",
+    "server.py reached 1,500 lines — split into routers/uploads.py, routers/asin.py, parsers/*.py becomes increasingly urgent.",
+    "asin_mappings collection has unique index on 'asin' — good. db.orders.asin still un-indexed; remap scan iterates source='amazon_po' (~6,580 rows) — acceptable for current size but should be indexed if orders grow."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py (relaxed test_upload_asin_mapping_inserts_and_remaps to be tolerant of pre-existing mapping state: enforces orders_remapped>=1 only when inserted=1)"
+  ],
+  "success_rate": {"backend": "100% (9/9 iter4 + 10/10 iter3 regression)", "frontend": "skipped per request"},
+  "test_credentials": "admin@ambiancesticker.com / Ambiance2026! (verified working)",
+  "seed_data_creation": "Verified feature end-to-end with B0DJMM6J4L → TEST_FRESH_SKU_X (14 orders remapped on first apply). Cleaned up after: reverted 14 orders' sku back to ASIN and deleted the mapping doc. Final DB state: 6,580 Amazon orders, 3 asin_mappings (B00PB8WM4S, B0CT5QL1DZ, B07PCPH33X — leftover from iter-4 test session, not introduced by iter-5).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Idempotency bug is FIXED and verified. Run: cd /app/backend/tests && pytest test_iteration4.py test_iteration3.py -v → 19/19 should pass. DB state at end of this session: 6,580 Amazon orders, 3 leftover asin_mappings from iter4 (harmless — orders already remapped). If a future test needs to verify orders_remapped>=1 on a fresh ASIN, pick one NOT in {B00PB8WM4S, B0CT5QL1DZ, B07PCPH33X} (e.g. iterate /api/orders?marketplaces=Amazon Vendor and find an order where sku==asin).",
+  "rca of the issue": "Already resolved in iter 5. The line_key rewrite at server.py:422 was deleted; line_key now stays {po_number}::{ASIN} regardless of mapping. Re-uploads of amazon_po.xls are now fully idempotent (inserted=0, updated may be 0 if no field changed). The duplicates that existed at end of iter-4 (6,614 vs 6,580) were cleaned by the main agent before this retest — confirmed via /api/orders?marketplaces=Amazon Vendor total=6580."
+}

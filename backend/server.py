@@ -411,15 +411,15 @@ def parse_amazon_po(content: bytes) -> List[dict]:
 
 
 async def apply_asin_mapping(rows: List[dict]) -> List[dict]:
-    """For Amazon orders without merchant_sku, look up mapping and rewrite sku + line_key."""
-    asins = {r["sku"] for r in rows if r.get("source") == "amazon_po" and r.get("asin") == r.get("sku")}
+    """For Amazon orders, rewrite sku to merchant_sku when mapping exists.
+    line_key stays PO::ASIN (set in parse_amazon_po) so re-uploads are idempotent."""
+    asins = {r.get("asin") for r in rows if r.get("source") == "amazon_po" and r.get("asin")}
     if not asins:
         return rows
     mapping = {m["asin"]: m["merchant_sku"] async for m in db.asin_mappings.find({"asin": {"$in": list(asins)}})}
     for r in rows:
         if r.get("source") == "amazon_po" and r.get("asin") in mapping:
             r["sku"] = mapping[r["asin"]]
-            r["line_key"] = f"{r['order_id']}::{r['sku']}"
     return rows
 
 
