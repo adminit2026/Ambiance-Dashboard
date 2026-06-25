@@ -103,6 +103,20 @@ export default function Uploads() {
     URL.revokeObjectURL(url);
   };
 
+  const downloadAsinTemplate = async () => {
+    const token = localStorage.getItem("ambiance_token");
+    const resp = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/templates/asin-mapping`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "asin_mapping_template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div>
       <PageHeader kicker="Data ingestion" title="Uploads" />
@@ -129,6 +143,37 @@ export default function Uploads() {
           testId="dropzone-costs"
           onDone={reload}
         />
+      </section>
+
+      <section className="px-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Dropzone
+          label="ASIN ↔ Merchant SKU"
+          hint="Amazon ASIN to your merchant SKU mapping"
+          endpoint="/uploads/asin-mapping"
+          accept=".csv,.xlsx"
+          testId="dropzone-asin"
+          onDone={reload}
+        />
+        <div className="surface p-6" data-testid="asin-info">
+          <div className="eyebrow">Why this matters</div>
+          <h3 className="font-display text-xl font-semibold mt-1 mb-3">Connect Amazon orders to your SKUs</h3>
+          <p className="text-sm text-[#5E636E] mb-3">
+            Amazon Vendor exports only contain ASINs (e.g. <span className="font-mono-num">B00PB8WM4S</span>), not your merchant SKUs (e.g. <span className="font-mono-num">SAND_116_15x20_white</span>).
+            Without a mapping, Amazon orders cannot be matched to your Cost of Production rows.
+          </p>
+          <ol className="text-sm space-y-2 mb-4 ml-4 list-decimal text-[#5E636E]">
+            <li>Download the pre-filled template below — every ASIN you sell is listed with product name and units sold.</li>
+            <li>Fill the <span className="font-mono-num">merchant_sku</span> column with your SKU for each ASIN.</li>
+            <li>Drop the file back here. Existing Amazon orders are re-mapped automatically.</li>
+          </ol>
+          <button
+            onClick={downloadAsinTemplate}
+            className="btn-primary inline-flex items-center gap-2"
+            data-testid="download-asin-template"
+          >
+            <FileText size={14} /> Download ASIN mapping template
+          </button>
+        </div>
       </section>
 
       <section className="px-8 py-6">

@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 4 backend + frontend tested. Cost parser auto-detection works on both cost_v2.xlsx (Sheet3 header row 0, 2 cols → 30,568 rows parsed) and cost_prod.xlsx (legacy Sheet3 header row 2 with cost+shipping). ASIN mapping endpoints all functional: template CSV streams 2,037 ASINs with correct header, upload inserts/upserts, list+search work case-insensitively, reprocess returns orders_remapped. Frontend Uploads page renders dropzone-asin (.csv,.xlsx), asin-info card with explainer, and download-asin-template button that successfully downloads asin_mapping_template.csv. HOWEVER: discovered a CRITICAL idempotency bug — apply_asin_mapping (server.py line 422) rewrites line_key to {po}::{merchant_sku}, contradicting the spec ('line_key always uses ASIN'). This breaks re-upload idempotency, creates duplicates (DB now has 6,614 Amazon orders vs 6,580 expected = 34 dupes for the test ASIN B00PB8WM4S), and causes orders_remapped to read 0 on subsequent mapping uploads. 6/9 new pytest tests pass; the 3 failing tests all point to the same root-cause line.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/uploads/orders (amazon_po) + POST /api/uploads/asin-mapping", "issue": "apply_asin_mapping (server.py line 422) overwrites line_key from {po}::ASIN to {po}::merchant_sku at upload time. Breaks the spec requirement 'line_key always uses ASIN so re-uploads are idempotent'. Result: (1) every Amazon PO re-upload after a mapping exists creates duplicate rows (34 dup rows now in DB for B00PB8WM4S→SAND_116_15x20_white); (2) /api/orders?marketplaces=Amazon Vendor returns 6,614 instead of 6,580; (3) POST /api/uploads/asin-mapping reports orders_remapped=0 even on first apply, because by the time _remap_amazon_orders runs, sku is already merchant_sku (apply_asin_mapping already rewrote it during prior upload). FIX: delete line 422 entirely; line_key must remain {order_id}::{ASIN} set by parse_amazon_po. Also one-time cleanup: db.orders.delete_many({source:'amazon_po', line_key:{$regex: '::(?!B[0-9A-Z]{9}$)'}}) — i.e. remove rows whose line_key suffix is not an ASIN pattern.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/orders", "issue": "Endpoint accepts only marketplaces/sku/date filters but no source filter — tests had to use marketplaces='Amazon Vendor' to count Amazon PO orders. Consider adding ?source= filter."},
+      {"endpoint": "POST /api/uploads/asin-mapping → orders_remapped", "issue": "Misleading 0 value when mapping was already applied at upload time. Once line_key bug is fixed, this will naturally read >0 on first mapping upload."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/test_reports/pytest/iteration4_results.xml"
+  ],
+  "action_items": [
+    "DELETE server.py line 422 (r['line_key'] = ...) in apply_asin_mapping. parse_amazon_po already sets the correct ASIN-based line_key; the rewrite is what creates duplicates.",
+    "One-time DB cleanup: remove 34 orphan rows where line_key suffix is merchant_sku (e.g. '::SAND_116_15x20_white'). After fix + cleanup, re-upload amazon_po.xls should leave total at exactly 6,580.",
+    "(Optional) Add 'source' query param to GET /api/orders for filtering by amazon_po / channelengine / beezup.",
+    "(Carry-over from iter 3) server.py is now 1,499 lines — split into routers/parsers modules.",
+    "(Carry-over from iter 3) PUT /api/cost-constants has no admin-role check."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew from 1,349 → 1,499 lines in iteration 4. Must be split: routers/uploads.py (orders/costs/asin), routers/asin.py (mapping CRUD), parsers/*.py.",
+    "apply_asin_mapping line 422 contradicts _remap_amazon_orders' own comment ('Updates sku only (not line_key)' at line 798). Two functions doing the same job with conflicting semantics → invariant violation.",
+    "_remap_amazon_orders iterates every Amazon order via async for + per-row update_one — N round-trips for ~6,580 rows. Use bulk_write or update_many per (asin, merchant_sku) group.",
+    "parse_cost_file auto-detect scans first 5 rows for 'SKU' — fine, but doesn't validate that 'Cout de Production' column also exists; silently returns [] and falls through to standard parser which then raises 'No valid cost rows found' if standard headers also absent. Add explicit validation/log.",
+    "/api/uploads/asin-mapping doesn't check role (admin) — any authenticated user can rewrite the entire ASIN mapping. Should be admin-only.",
+    "asin_mapping_template streams .csv but the dropzone advertises .csv/.xlsx — accept .xlsx in parse_asin_mapping (already does via pd.read_excel) but no XLSX template export. Consistent OK.",
+    "Indexing: db.asin_mappings has unique index on 'asin'. Good. Consider also indexing db.orders.asin for the remap scan (currently full collection scan filtered by source)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py (new — 9 tests covering cost parser + ASIN mapping + idempotency)"
+  ],
+  "success_rate": {"backend": "67% (6/9 new tests pass; 3 fail all due to single root-cause bug in apply_asin_mapping)", "frontend": "100% (Uploads ASIN dropzone + info card + template download verified)"},
+  "test_credentials": "admin@ambiancesticker.com / Ambiance2026! (verified working)",
+  "seed_data_creation": "Uploaded mapping {B00PB8WM4S → SAND_116_15x20_white} via /api/uploads/asin-mapping; uploaded cost_v2.xlsx and cost_prod.xlsx via /api/uploads/costs; re-uploaded amazon_po.xls. After the bug fix the DB needs cleanup of 34 dup line_keys ending in ::SAND_116_15x20_white before retest.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend/tests && pytest test_iteration4.py -v. Once main agent removes server.py line 422 AND cleans up the 34 dup orders, all 9 tests should pass. Frontend Uploads page: dropzone-asin / dropzone-asin-input / asin-info / download-asin-template all confirmed working. iteration3 regression suite (test_iteration3.py) untouched.",
+  "rca of the issue": {
+    "bug": "Re-uploading Amazon PO after an ASIN mapping is applied creates duplicate orders.",
+    "root_cause": "apply_asin_mapping (server.py:413-423) is called from upload_orders right after parse_amazon_po. It rewrites both sku AND line_key (line 422: r['line_key'] = f\"{r['order_id']}::{r['sku']}\"). Since sku is now the merchant_sku, line_key becomes {po}::{merchant_sku}. But parse_amazon_po set it to {po}::{ASIN} initially, and the unique upsert key db.orders is line_key, so on next upload the new {po}::{ASIN} doesn't match the stored {po}::{merchant_sku} → inserted as new row.",
+    "reproduction": "1) Upload amazon_po.xls (6580 rows, all ASIN-based line_keys). 2) POST /api/uploads/asin-mapping with {B00PB8WM4S, SAND_116_15x20_white} — this triggers _remap which only changes sku, line_keys stay ASIN. 3) Re-upload amazon_po.xls — apply_asin_mapping runs, sees B00PB8WM4S in mapping, rewrites line_key to {po}::SAND_*. 34 new rows inserted. DB now has 6580 ASIN-keyed + 34 SAND-keyed = 6614 amazon orders.",
+    "mitigation": "1) Delete server.py line 422. 2) One-time DB cleanup: db.orders.delete_many({source:'amazon_po', line_key:{$not:{$regex:'::B[0-9A-Z]{9}$'}}}). 3) Re-run pytest — should be 9/9 pass."
+  }
+}

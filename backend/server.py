@@ -369,7 +369,9 @@ def parse_amazon_po(content: bytes) -> List[dict]:
 
     for _, r in df.iterrows():
         po = s(r.get("PO"))
-        sku = s(r.get("Merchant SKU")) or s(r.get("ASIN"))
+        merchant_sku = s(r.get("Merchant SKU"))
+        asin = s(r.get("ASIN"))
+        sku = merchant_sku or asin
         if not po or not sku or sku.lower() in ("nan", "none"):
             continue
         order_date = parse_date(r.get("Order date"))
@@ -389,8 +391,9 @@ def parse_amazon_po(content: bytes) -> List[dict]:
             "marketplace": "Amazon Vendor",
             "channel_raw": "Amazon Vendor PO",
             "order_id": po,
-            "line_key": f"{po}::{sku}",
-            "sku": sku,
+            "line_key": f"{po}::{asin}",  # ALWAYS ASIN-based so re-uploads/remaps don't duplicate
+            "sku": sku,  # will be remapped by apply_asin_mapping if mapping exists
+            "asin": asin,
             "product_name": product_name,
             "quantity": qty,
             "unit_price": unit_cost,
@@ -407,50 +410,102 @@ def parse_amazon_po(content: bytes) -> List[dict]:
     return rows
 
 
+async def apply_asin_mapping(rows: List[dict]) -> List[dict]:
+    """For Amazon orders without merchant_sku, look up mapping and rewrite sku + line_key."""
+    asins = {r["sku"] for r in rows if r.get("source") == "amazon_po" and r.get("asin") == r.get("sku")}
+    if not asins:
+        return rows
+    mapping = {m["asin"]: m["merchant_sku"] async for m in db.asin_mappings.find({"asin": {"$in": list(asins)}})}
+    for r in rows:
+        if r.get("source") == "amazon_po" and r.get("asin") in mapping:
+            r["sku"] = mapping[r["asin"]]
+            r["line_key"] = f"{r['order_id']}::{r['sku']}"
+    return rows
+
+
+def parse_asin_mapping(content: bytes, filename: str) -> List[dict]:
+    """ASIN ↔ Merchant SKU mapping. Expects columns: asin, merchant_sku (or sku), product_name (opt)."""
+    fn = (filename or "").lower()
+    if fn.endswith(".csv"):
+        text = content.decode("utf-8-sig", errors="replace")
+        df = pd.read_csv(io.StringIO(text))
+    else:
+        try:
+            df = pd.read_excel(io.BytesIO(content), engine="openpyxl")
+        except Exception:
+            df = pd.read_excel(io.BytesIO(content))
+    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+    out = []
+    for _, r in df.iterrows():
+        row = r.to_dict()
+        asin = row.get("asin")
+        merchant_sku = row.get("merchant_sku") or row.get("sku")
+        if not asin or pd.isna(asin) or not merchant_sku or pd.isna(merchant_sku):
+            continue
+        asin = str(asin).strip()
+        merchant_sku = str(merchant_sku).strip()
+        if not asin or not merchant_sku or merchant_sku.lower() == "nan":
+            continue
+        product_name = str(row.get("product_name") or row.get("title") or "").strip()
+        out.append({"asin": asin, "merchant_sku": merchant_sku, "product_name": product_name})
+    return out
+
+
 def parse_cost_file(content: bytes, filename: str) -> List[dict]:
-    """Cost upload. Supports two formats:
+    """Cost upload. Supports multiple formats:
     1) Standard template (CSV/XLSX) with columns: sku, cost_per_unit (or cost), shipping_cost (opt), product_name (opt), currency (opt).
     2) Ambiance legacy workbook 'CostProdShippingCalc' with Sheet3, header on row 3 (idx 2),
-       SKU in column A, 'Cout de Production' in column L (idx 11),
-       'FBM Frais poste + packaging' in column M (idx 12).
+       SKU in column A, 'Cout de Production' in column L (idx 11), 'FBM Frais poste + packaging' in column M (idx 12).
+    3) Simple Sheet3 workbook with header on row 0: SKU + Cout de Production columns only.
     """
     fn = (filename or "").lower()
-    # Detect legacy Ambiance workbook by sheet name
     if not fn.endswith(".csv"):
         try:
             xl = pd.ExcelFile(io.BytesIO(content), engine="openpyxl")
             sheets_lower = [s.lower() for s in xl.sheet_names]
             if "sheet3" in sheets_lower:
-                # Legacy ambiance cost workbook
                 raw = pd.read_excel(io.BytesIO(content), sheet_name="Sheet3", header=None, engine="openpyxl")
-                # Use row index 2 as header
-                headers = [str(x).strip() if pd.notna(x) else "" for x in raw.iloc[2].tolist()]
-                data = raw.iloc[3:].reset_index(drop=True)
-                data.columns = headers + [f"_col{i}" for i in range(len(data.columns) - len(headers))] if len(data.columns) > len(headers) else headers[: len(data.columns)]
-                out = []
-                for _, r in data.iterrows():
-                    sku = r.get("SKU")
-                    if not isinstance(sku, str):
-                        if pd.isna(sku):
+                # Auto-detect header row: scan first 5 rows for 'SKU'
+                header_row = None
+                for i in range(min(5, len(raw))):
+                    row_vals = [str(x).strip().upper() for x in raw.iloc[i].tolist() if pd.notna(x)]
+                    if "SKU" in row_vals:
+                        header_row = i
+                        break
+                if header_row is not None:
+                    headers = [str(x).strip() if pd.notna(x) else f"_col{j}" for j, x in enumerate(raw.iloc[header_row].tolist())]
+                    data = raw.iloc[header_row + 1:].reset_index(drop=True)
+                    data.columns = headers[: len(data.columns)]
+                    out = []
+                    for _, r in data.iterrows():
+                        sku_v = r.get("SKU")
+                        if not isinstance(sku_v, str):
+                            if pd.isna(sku_v):
+                                continue
+                            sku_v = str(sku_v).strip()
+                        sku = sku_v.strip()
+                        if not sku or sku.lower() in ("sample", "sku", "nan"):
                             continue
-                        sku = str(sku).strip()
-                    sku = sku.strip()
-                    if not sku or sku.lower() in ("sample", "sku", "nan"):
-                        continue
-                    cost = parse_number(r.get("Cout de Production"))
-                    if cost <= 0:
-                        continue
-                    shipping = parse_number(r.get("FBM Frais poste + packaging") or r.get("FBA SHIPPING") or 0)
-                    out.append({
-                        "sku": sku,
-                        "product_name": (str(r.get("Product description")).strip() if pd.notna(r.get("Product description")) else ""),
-                        "cost_per_unit": cost,
-                        "shipping_cost": shipping,
-                        "currency": "EUR",
-                    })
-                return out
-        except Exception:
-            pass
+                        cost = parse_number(r.get("Cout de Production"))
+                        if cost <= 0:
+                            continue
+                        shipping = parse_number(
+                            r.get("FBM Frais poste + packaging")
+                            if "FBM Frais poste + packaging" in data.columns
+                            else r.get("FBA SHIPPING") if "FBA SHIPPING" in data.columns else 0
+                        )
+                        prod_desc = r.get("Product description") if "Product description" in data.columns else None
+                        out.append({
+                            "sku": sku,
+                            "product_name": (str(prod_desc).strip() if prod_desc is not None and pd.notna(prod_desc) else ""),
+                            "cost_per_unit": cost,
+                            "shipping_cost": shipping,
+                            "currency": "EUR",
+                        })
+                    if out:
+                        return out
+        except Exception as e:
+            logger.warning("Sheet3 detect failed: %s", e)
 
     # Fallback: standard template parsing
     if fn.endswith(".csv"):
@@ -527,6 +582,7 @@ async def on_startup():
     await db.orders.create_index("sku")
     await db.costs.create_index("sku", unique=True)
     await db.uploads.create_index([("uploaded_at", -1)])
+    await db.asin_mappings.create_index("asin", unique=True)
 
     # seed admin
     existing = await db.users.find_one({"email": ADMIN_EMAIL})
@@ -608,6 +664,7 @@ async def upload_orders(file: UploadFile = File(...), source: str = Form("auto")
             rows = parse_beezup(content)
         else:
             rows = parse_amazon_po(content)
+            rows = await apply_asin_mapping(rows)
     except Exception as e:
         logger.exception("Parse error")
         raise HTTPException(status_code=400, detail=f"Failed to parse file: {e}")
@@ -670,6 +727,100 @@ async def upload_costs(file: UploadFile = File(...), user=Depends(get_current_us
 async def uploads_history(user=Depends(get_current_user)):
     docs = await db.uploads.find({}, {"_id": 0}).sort("uploaded_at", -1).to_list(100)
     return docs
+
+
+# ------------------- ASIN ↔ Merchant SKU mapping -------------------
+@api.post("/uploads/asin-mapping")
+async def upload_asin_mapping(file: UploadFile = File(...), user=Depends(get_current_user)):
+    content = await file.read()
+    rows = parse_asin_mapping(content, file.filename or "")
+    if not rows:
+        raise HTTPException(status_code=400, detail="No valid rows. File must have 'asin' and 'merchant_sku' (or 'sku') columns.")
+    inserted = updated = 0
+    for r in rows:
+        r["updated_at"] = datetime.now(timezone.utc).isoformat()
+        res = await db.asin_mappings.update_one({"asin": r["asin"]}, {"$set": r}, upsert=True)
+        if res.upserted_id:
+            inserted += 1
+        else:
+            updated += 1
+    await db.uploads.insert_one({
+        "filename": file.filename, "source": "asin_mapping",
+        "rows_total": len(rows), "inserted": inserted, "updated": updated,
+        "uploaded_at": datetime.now(timezone.utc).isoformat(), "by": user["email"],
+    })
+    # auto-remap existing Amazon orders
+    remapped = await _remap_amazon_orders()
+    return {"rows_total": len(rows), "inserted": inserted, "updated": updated, "orders_remapped": remapped}
+
+
+@api.get("/asin-mappings")
+async def list_asin_mappings(search: Optional[str] = None, limit: int = 5000, user=Depends(get_current_user)):
+    q: Dict[str, Any] = {}
+    if search:
+        s = re.escape(search)
+        q["$or"] = [{"asin": {"$regex": s, "$options": "i"}}, {"merchant_sku": {"$regex": s, "$options": "i"}}]
+    docs = await db.asin_mappings.find(q, {"_id": 0}).sort("updated_at", -1).to_list(limit)
+    return docs
+
+
+@api.get("/templates/asin-mapping")
+async def asin_mapping_template(user=Depends(get_current_user)):
+    """Generate a template pre-filled with all current Amazon ASINs that have no merchant_sku mapping yet."""
+    # All ASINs from amazon orders
+    pipeline = [
+        {"$match": {"source": "amazon_po"}},
+        {"$group": {"_id": "$asin", "product_name": {"$first": "$product_name"}, "units": {"$sum": "$quantity"}, "current_sku": {"$first": "$sku"}}},
+        {"$sort": {"units": -1}},
+    ]
+    asins = await db.orders.aggregate(pipeline).to_list(10000)
+    existing = {m["asin"]: m async for m in db.asin_mappings.find({}, {"_id": 0})}
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["asin", "merchant_sku", "product_name", "units_sold"])
+    for a in asins:
+        asin = a["_id"]
+        if not asin:
+            continue
+        # If currently stored sku != asin, that's already a merchant_sku (don't suggest re-mapping)
+        existing_map = existing.get(asin, {})
+        merchant_sku = existing_map.get("merchant_sku") or (a.get("current_sku") if a.get("current_sku") != asin else "")
+        w.writerow([asin, merchant_sku, a.get("product_name") or "", a.get("units", 0)])
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=asin_mapping_template.csv"},
+    )
+
+
+async def _remap_amazon_orders() -> int:
+    """Re-apply the ASIN→merchant_sku mapping to existing Amazon orders. Updates sku only (not line_key)."""
+    from pymongo import UpdateOne
+    mappings = {m["asin"]: m["merchant_sku"] async for m in db.asin_mappings.find({}, {"_id": 0})}
+    if not mappings:
+        return 0
+    changed = 0
+    bulk = []
+    async for o in db.orders.find({"source": "amazon_po"}, {"_id": 1, "asin": 1, "sku": 1}):
+        asin = o.get("asin") or o.get("sku")
+        new_sku = mappings.get(asin)
+        if not new_sku or new_sku == o.get("sku"):
+            continue
+        bulk.append(UpdateOne({"_id": o["_id"]}, {"$set": {"sku": new_sku}}))
+        changed += 1
+        if len(bulk) >= 500:
+            await db.orders.bulk_write(bulk, ordered=False)
+            bulk = []
+    if bulk:
+        await db.orders.bulk_write(bulk, ordered=False)
+    return changed
+
+
+@api.post("/admin/reprocess-amazon-asins")
+async def reprocess_amazon_asins(user=Depends(get_current_user)):
+    n = await _remap_amazon_orders()
+    return {"orders_remapped": n}
 
 
 # ------------------- COSTS -------------------
