@@ -1,0 +1,55 @@
+{
+  "summary": "Iteration 6 backend + frontend tested for combined LRM+AMZ mapping, sku_mappings collection, canonical marketplaces list, idempotency, and dashboards. 14/14 new iteration6 tests PASS. 18/19 regression tests (iter3+iter4) PASS — the single failure is a stale hardcoded ASIN assumption in legacy test_iteration4 (SAND_116_15x20_white was mapped to B00PB8WM4S in iter4 seed but the new canonical lrm_amz_map.xlsx maps it to B01M18XNNS; invariant is intact, the test data assumption is outdated). Frontend Marketplaces page shows all 16 canonical filter pills including Ambiance Web/Appros/Zooplus placeholders. Frontend Products page top rows show merchant SKUs (col-, SAND_/SAND-, J-, J3-, roll-) with realistic COGS and margin %. Critical invariants verified: (a) Amazon line_key always ends with ASIN (^PO::B[0-9A-Z]{9}$), (b) re-upload of amazon_po.xls inserts=0 and Amazon Vendor total stays at 6,580, (c) re-upload of beezup.xlsx inserts=0 and Leroy Merlin total stays stable, (d) sku field holds merchant_sku while asin field preserves the ASIN.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/dashboard/summary", "issue": "Returned margin_pct=63.41% and revenue €398,832 / cogs €113,658 — the review request mentioned 'expected revenue ~119k, margin ~66%, cogs ~27k'. The actual numbers reflect all channels (not just Amazon). If the expected figure was Amazon-only, no bug; otherwise the figure spec may be stale. Numbers ARE substantially different from pre-mapping (cogs > 1000, margin_pct in 30-95 range), so the qualitative expectation holds."},
+      {"endpoint": "POST /api/uploads/asin-mapping", "issue": "(Carry-over from iter 4) Still no admin-role check — any authenticated user can rewrite the entire sku_mappings collection."},
+      {"endpoint": "GET /api/orders", "issue": "(Carry-over from iter 4/5) No 'source' query filter — must use marketplaces='Amazon Vendor' to count Amazon PO orders."},
+      {"endpoint": "DELETE /api/asin-mappings/{asin}", "issue": "(Carry-over from iter 5) No DELETE/PATCH endpoint exposed for individual sku_mappings entries."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Marketplaces", "issues": ["Channel performance chart top section shows only non-Amazon channels (Amazon Vendor pill exists but Amazon Vendor bar absent from the chart — verify whether this is intentional date-range filter or if the chart should include Amazon Vendor by default)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration6.py",
+    "/app/test_reports/pytest/iteration6_results.xml",
+    "/app/test_reports/pytest/iteration6_regression.xml"
+  ],
+  "action_items": [
+    "(Cosmetic) Update legacy /app/backend/tests/test_iteration4.py::test_orders_query_returns_mapped_sku_with_asin_preserved — its hardcoded ASIN B00PB8WM4S → SAND_116_15x20_white pair no longer matches canonical lrm_amz_map (which uses B01M18XNNS for the same merchant SKU). Replace with a dynamic lookup or drop the assertion.",
+    "Add admin-role check to POST /api/uploads/asin-mapping (and POST /api/uploads/orders, /api/uploads/costs, PUT /api/cost-constants) — these are admin-only operations.",
+    "(Carry-over) Split server.py (1,623 lines) into routers/uploads.py, routers/asin.py, routers/marketplaces.py, parsers/*.py.",
+    "(Carry-over) Add 'source' query param to GET /api/orders.",
+    "(Carry-over) Expose DELETE /api/asin-mappings/{asin} and /api/sku-mappings/{marketplace}/{external_id}.",
+    "(Optional) Verify whether the Marketplaces page chart should include Amazon Vendor by default — Amazon Vendor pill is in the filter row but no Amazon Vendor bar shows on the channel-performance chart."
+  ],
+  "critical_code_review_comments": [
+    "parse_asin_mapping (server.py:451-518) cleanly handles both combined LRM+AMZ format and legacy asin/merchant_sku CSV — auto-detection via column-name check is robust. LRM ID float-to-int conversion (line 484-492) correctly strips trailing .0 from IDs like 88783389.0.",
+    "apply_asin_mapping (server.py:413-448) is now correct: it rewrites only the sku field, never line_key. Lookups use the (marketplace, external_id) compound key in sku_mappings with a fallback to legacy asin_mappings. Idempotent re-uploads confirmed (inserted=0).",
+    "_remap_amazon_orders (server.py:877-918) iterates Amazon orders by asin field and Leroy Merlin orders by line_key suffix — correct strategy, uses bulk_write batches of 500.",
+    "CANONICAL_MARKETPLACES (server.py:1429-1446) is exactly 16 entries; list_marketplaces merges DB distinct values with canonical list so empty placeholders (Ambiance Web, Appros, Zooplus) always render — verified live.",
+    "Mirror to legacy asin_mappings only for Amazon Vendor rows (server.py:821-827) — good backward compat; Leroy Merlin entries live only in sku_mappings.",
+    "(Still open) server.py is now 1,623 lines — split is overdue.",
+    "(Still open) /api/uploads/asin-mapping has no admin-role check.",
+    "sku_mappings has unique compound index (marketplace, external_id) — server.py:653 — exactly as specified."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration6.py (new — 14 tests covering combined mapping upload, canonical marketplaces, post-mapping order shape, idempotency, reprocess endpoint, summary dashboard, top-skus dashboard)"
+  ],
+  "success_rate": {
+    "backend": "100% on new iter6 suite (14/14), 95% on regression incl. iter3+iter4 (18/19 — one stale test data assertion).",
+    "frontend": "100% on Marketplaces filter pills (all 16 canonical present) + Products top SKUs (merchant SKUs with margin % visible)."
+  },
+  "test_credentials": "admin@ambiancesticker.com / Ambiance2026! (verified working)",
+  "seed_data_creation": "Uploaded /app/sample_data/lrm_amz_map.xlsx during testing — combined mapping covers 26k Amazon ASINs + 21k LRM IDs (rows_total ~47k). Also created TEST_BACK_COMPAT_ASIN → TEST_back_compat_sku via simple-CSV backward-compat test (single row, leaves no orphan orders).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "DB state at end of iter6: 6,580 Amazon orders, ~1,300 BeezUP/ChannelEngine orders, sku_mappings has ~47,418 entries (Amazon Vendor + Leroy Merlin + TEST_BACK_COMPAT_ASIN). Idempotency invariant holds: line_key suffix is always ASIN for Amazon; sku field is merchant_sku; re-upload of amazon_po.xls or beezup.xlsx returns inserted=0. To re-run: pytest /app/backend/tests/test_iteration6.py -v (14 tests, ~38s). The legacy iter4 test_orders_query_returns_mapped_sku_with_asin_preserved fails on a stale hardcoded ASIN — not a regression.",
+  "rca of the issue": "No production bug. The only failing regression test (test_iteration4) has a stale data assumption — it asserted SAND_116_15x20_white maps from B00PB8WM4S, but the canonical lrm_amz_map.xlsx now maps it from B01M18XNNS. The invariant (asin field preserved, sku=merchant_sku, line_key=PO::ASIN) is fully satisfied on the returned record. Fix: update the test to either pick a non-conflicting ASIN/SKU pair or assert structural invariants only."
+}

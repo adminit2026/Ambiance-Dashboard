@@ -411,20 +411,50 @@ def parse_amazon_po(content: bytes) -> List[dict]:
 
 
 async def apply_asin_mapping(rows: List[dict]) -> List[dict]:
-    """For Amazon orders, rewrite sku to merchant_sku when mapping exists.
-    line_key stays PO::ASIN (set in parse_amazon_po) so re-uploads are idempotent."""
-    asins = {r.get("asin") for r in rows if r.get("source") == "amazon_po" and r.get("asin")}
-    if not asins:
-        return rows
-    mapping = {m["asin"]: m["merchant_sku"] async for m in db.asin_mappings.find({"asin": {"$in": list(asins)}})}
+    """For Amazon AND Leroy Merlin orders, rewrite sku to merchant_sku via sku_mappings.
+    line_key stays stable (PO::ASIN for Amazon, OrderId::ExtId for BeezUP) so re-uploads are idempotent.
+    """
+    # Collect (marketplace, external_id) lookups needed
+    needed = set()
     for r in rows:
-        if r.get("source") == "amazon_po" and r.get("asin") in mapping:
-            r["sku"] = mapping[r["asin"]]
+        if r.get("source") == "amazon_po" and r.get("asin"):
+            needed.add(("Amazon Vendor", r["asin"]))
+        elif r.get("source") == "beezup" and r.get("marketplace") == "Leroy Merlin" and r.get("sku"):
+            needed.add(("Leroy Merlin", str(r["sku"])))
+    if not needed:
+        return rows
+    # Query sku_mappings
+    marketplaces = list({m for m, _ in needed})
+    ext_ids = list({e for _, e in needed})
+    mappings: Dict[tuple, str] = {}
+    async for m in db.sku_mappings.find({"marketplace": {"$in": marketplaces}, "external_id": {"$in": ext_ids}}):
+        mappings[(m["marketplace"], m["external_id"])] = m["merchant_sku"]
+    # Also fallback to legacy asin_mappings for Amazon
+    asins_to_check = [aid for mk, aid in needed if mk == "Amazon Vendor" and ("Amazon Vendor", aid) not in mappings]
+    if asins_to_check:
+        async for am in db.asin_mappings.find({"asin": {"$in": asins_to_check}}):
+            mappings[("Amazon Vendor", am["asin"])] = am["merchant_sku"]
+    # Apply
+    for r in rows:
+        if r.get("source") == "amazon_po" and r.get("asin"):
+            ms = mappings.get(("Amazon Vendor", r["asin"]))
+            if ms:
+                r["sku"] = ms
+        elif r.get("source") == "beezup" and r.get("marketplace") == "Leroy Merlin" and r.get("sku"):
+            ms = mappings.get(("Leroy Merlin", str(r["sku"])))
+            if ms:
+                r["sku"] = ms
+                # line_key contains the original LRM external id — keep it stable for idempotency
     return rows
 
 
 def parse_asin_mapping(content: bytes, filename: str) -> List[dict]:
-    """ASIN ↔ Merchant SKU mapping. Expects columns: asin, merchant_sku (or sku), product_name (opt)."""
+    """Mapping file parser. Supports two formats:
+    1) Simple: asin, merchant_sku (or sku), product_name (opt)
+    2) LRM+AMZ combined: SKU, Leroy Merlin ID, Amazon ASIN, leroy merlin title, amazon title
+       → emits two mapping rows per source row (one Amazon, one Leroy Merlin)
+    Returns list of {marketplace, external_id, merchant_sku, product_name}.
+    """
     fn = (filename or "").lower()
     if fn.endswith(".csv"):
         text = content.decode("utf-8-sig", errors="replace")
@@ -434,20 +464,57 @@ def parse_asin_mapping(content: bytes, filename: str) -> List[dict]:
             df = pd.read_excel(io.BytesIO(content), engine="openpyxl")
         except Exception:
             df = pd.read_excel(io.BytesIO(content))
-    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+    cols_lower = {str(c).strip().lower(): c for c in df.columns}
     out = []
+
+    def s(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        return str(v).strip()
+
+    # Detect LRM+AMZ combined format
+    is_combined = "amazon asin" in cols_lower and "leroy merlin id" in cols_lower and "sku" in cols_lower
+    if is_combined:
+        for _, r in df.iterrows():
+            merchant_sku = s(r.get(cols_lower["sku"]))
+            asin = s(r.get(cols_lower["amazon asin"]))
+            lrm_id_raw = r.get(cols_lower["leroy merlin id"])
+            lrm_id = ""
+            if lrm_id_raw is not None and not (isinstance(lrm_id_raw, float) and pd.isna(lrm_id_raw)):
+                # LRM IDs come in as floats like 88783389.0 — strip the trailing .0
+                if isinstance(lrm_id_raw, float):
+                    lrm_id = str(int(lrm_id_raw))
+                else:
+                    lrm_id = str(lrm_id_raw).strip().rstrip(".0").strip() if "." in str(lrm_id_raw) else str(lrm_id_raw).strip()
+                    try:
+                        lrm_id = str(int(float(lrm_id_raw)))
+                    except (ValueError, TypeError):
+                        pass
+            amz_title = s(r.get(cols_lower.get("amazon title", "amazon title")))
+            lrm_title = s(r.get(cols_lower.get("leroy merlin title", "leroy merlin title")))
+            if not merchant_sku or merchant_sku.lower() == "nan":
+                continue
+            if asin and asin.lower() != "nan":
+                out.append({"marketplace": "Amazon Vendor", "external_id": asin, "merchant_sku": merchant_sku, "product_name": amz_title})
+            if lrm_id and lrm_id.lower() != "nan":
+                out.append({"marketplace": "Leroy Merlin", "external_id": lrm_id, "merchant_sku": merchant_sku, "product_name": lrm_title})
+        return out
+
+    # Simple ASIN-only format
+    norm_cols = {str(c).strip().lower().replace(" ", "_"): c for c in df.columns}
     for _, r in df.iterrows():
-        row = r.to_dict()
-        asin = row.get("asin")
-        merchant_sku = row.get("merchant_sku") or row.get("sku")
-        if not asin or pd.isna(asin) or not merchant_sku or pd.isna(merchant_sku):
+        asin = r.get(norm_cols.get("asin", "asin"))
+        merchant_sku = r.get(norm_cols.get("merchant_sku", "merchant_sku")) if "merchant_sku" in norm_cols else r.get(norm_cols.get("sku", "sku"))
+        if asin is None or (isinstance(asin, float) and pd.isna(asin)):
             continue
-        asin = str(asin).strip()
-        merchant_sku = str(merchant_sku).strip()
-        if not asin or not merchant_sku or merchant_sku.lower() == "nan":
+        if merchant_sku is None or (isinstance(merchant_sku, float) and pd.isna(merchant_sku)):
             continue
-        product_name = str(row.get("product_name") or row.get("title") or "").strip()
-        out.append({"asin": asin, "merchant_sku": merchant_sku, "product_name": product_name})
+        asin_s = s(asin)
+        sku_s = s(merchant_sku)
+        if not asin_s or not sku_s or sku_s.lower() == "nan":
+            continue
+        product_name = s(r.get(norm_cols.get("product_name", "product_name")) or r.get(norm_cols.get("title", "title"), ""))
+        out.append({"marketplace": "Amazon Vendor", "external_id": asin_s, "merchant_sku": sku_s, "product_name": product_name})
     return out
 
 
@@ -583,6 +650,7 @@ async def on_startup():
     await db.costs.create_index("sku", unique=True)
     await db.uploads.create_index([("uploaded_at", -1)])
     await db.asin_mappings.create_index("asin", unique=True)
+    await db.sku_mappings.create_index([("marketplace", 1), ("external_id", 1)], unique=True)
 
     # seed admin
     existing = await db.users.find_one({"email": ADMIN_EMAIL})
@@ -735,21 +803,33 @@ async def upload_asin_mapping(file: UploadFile = File(...), user=Depends(get_cur
     content = await file.read()
     rows = parse_asin_mapping(content, file.filename or "")
     if not rows:
-        raise HTTPException(status_code=400, detail="No valid rows. File must have 'asin' and 'merchant_sku' (or 'sku') columns.")
+        raise HTTPException(status_code=400, detail="No valid rows. File must have 'asin' + 'merchant_sku' OR (SKU + Leroy Merlin ID + Amazon ASIN) columns.")
     inserted = updated = 0
+    asin_legacy_count = 0
     for r in rows:
         r["updated_at"] = datetime.now(timezone.utc).isoformat()
-        res = await db.asin_mappings.update_one({"asin": r["asin"]}, {"$set": r}, upsert=True)
+        res = await db.sku_mappings.update_one(
+            {"marketplace": r["marketplace"], "external_id": r["external_id"]},
+            {"$set": r},
+            upsert=True,
+        )
         if res.upserted_id:
             inserted += 1
         else:
             updated += 1
+        # Mirror to legacy asin_mappings for backward compat
+        if r["marketplace"] == "Amazon Vendor":
+            await db.asin_mappings.update_one(
+                {"asin": r["external_id"]},
+                {"$set": {"asin": r["external_id"], "merchant_sku": r["merchant_sku"], "product_name": r.get("product_name", ""), "updated_at": r["updated_at"]}},
+                upsert=True,
+            )
+            asin_legacy_count += 1
     await db.uploads.insert_one({
-        "filename": file.filename, "source": "asin_mapping",
+        "filename": file.filename, "source": "sku_mapping",
         "rows_total": len(rows), "inserted": inserted, "updated": updated,
         "uploaded_at": datetime.now(timezone.utc).isoformat(), "by": user["email"],
     })
-    # auto-remap existing Amazon orders
     remapped = await _remap_amazon_orders()
     return {"rows_total": len(rows), "inserted": inserted, "updated": updated, "orders_remapped": remapped}
 
@@ -795,16 +875,37 @@ async def asin_mapping_template(user=Depends(get_current_user)):
 
 
 async def _remap_amazon_orders() -> int:
-    """Re-apply the ASIN→merchant_sku mapping to existing Amazon orders. Updates sku only (not line_key)."""
+    """Re-apply all sku_mappings to existing orders (Amazon by ASIN, Leroy Merlin by external LRM ID stored in line_key).
+    Updates sku only — never line_key, so re-uploads stay idempotent."""
     from pymongo import UpdateOne
-    mappings = {m["asin"]: m["merchant_sku"] async for m in db.asin_mappings.find({}, {"_id": 0})}
+    # Load all mappings
+    mappings: Dict[tuple, str] = {}
+    async for m in db.sku_mappings.find({}, {"_id": 0}):
+        mappings[(m["marketplace"], m["external_id"])] = m["merchant_sku"]
+    # Legacy asin_mappings (Amazon only)
+    async for m in db.asin_mappings.find({}, {"_id": 0}):
+        mappings.setdefault(("Amazon Vendor", m["asin"]), m["merchant_sku"])
     if not mappings:
         return 0
     changed = 0
     bulk = []
+    # Amazon: match by stored asin field
     async for o in db.orders.find({"source": "amazon_po"}, {"_id": 1, "asin": 1, "sku": 1}):
         asin = o.get("asin") or o.get("sku")
-        new_sku = mappings.get(asin)
+        new_sku = mappings.get(("Amazon Vendor", asin))
+        if not new_sku or new_sku == o.get("sku"):
+            continue
+        bulk.append(UpdateOne({"_id": o["_id"]}, {"$set": {"sku": new_sku}}))
+        changed += 1
+        if len(bulk) >= 500:
+            await db.orders.bulk_write(bulk, ordered=False)
+            bulk = []
+    # Leroy Merlin: external id is stored in line_key suffix
+    async for o in db.orders.find({"source": "beezup", "marketplace": "Leroy Merlin"}, {"_id": 1, "sku": 1, "line_key": 1}):
+        # external id = portion of line_key after '::'
+        lk = o.get("line_key", "")
+        ext_id = lk.split("::", 1)[1] if "::" in lk else o.get("sku")
+        new_sku = mappings.get(("Leroy Merlin", ext_id))
         if not new_sku or new_sku == o.get("sku"):
             continue
         bulk.append(UpdateOne({"_id": o["_id"]}, {"$set": {"sku": new_sku}}))
@@ -1325,10 +1426,32 @@ async def library_export(user=Depends(get_current_user)):
     )
 
 
+CANONICAL_MARKETPLACES = [
+    "Amazon Vendor",
+    "Ambiance Web",
+    "Appros",
+    "BOL.COM",
+    "CDiscount",
+    "Castorama",
+    "Kaufland",
+    "Leroy Merlin",
+    "Maison",
+    "Mano Mano",
+    "Maxeda - BE",
+    "Maxeda - NL",
+    "PinkConnect Veepee - BE",
+    "PinkConnect Veepee - FR",
+    "PinkConnect Veepee - NL",
+    "Zooplus",
+]
+
+
 @api.get("/marketplaces")
 async def list_marketplaces(user=Depends(get_current_user)):
     mks = await db.orders.distinct("marketplace")
-    return sorted([m for m in mks if m])
+    # Merge with canonical list so empty placeholders (e.g. Ambiance Web) always appear
+    combined = sorted(set([m for m in mks if m] + CANONICAL_MARKETPLACES))
+    return combined
 
 
 @api.post("/admin/renormalize-marketplaces")
