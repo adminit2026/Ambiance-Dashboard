@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / ".env")
+load_dotenv(ROOT_DIR / ".env", override=False)
 
 import os
 import io
@@ -1044,16 +1044,17 @@ async def dashboard_summary(
     lines = int(r["lines"] or 0)
     aov = revenue / orders_count if orders_count else 0
 
-    # COGS via per-sku cost lookup + constants
-    costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({}, {"_id": 0})}
+    # COGS via per-sku cost lookup + constants (lazy: load only costs for SKUs in scope)
     rates = await get_rates()
     constants = await get_cost_constants()
     op_cost = float(constants["operational_cost_per_unit"])
     mk_shipping = constants["production_shipping_by_marketplace"] or {}
+    skus_in_scope = await db.orders.distinct("sku", match)
+    costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({"sku": {"$in": skus_in_scope}}, {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1})}
     cogs = 0.0
     operational_total = 0.0
     prod_shipping_total = 0.0
-    async for o in db.orders.find(match, {"sku": 1, "quantity": 1, "currency": 1, "marketplace": 1}):
+    async for o in db.orders.find(match, {"sku": 1, "quantity": 1, "marketplace": 1}):
         qty = int(o.get("quantity") or 0)
         c = costs_map.get(o.get("sku"))
         if c:
@@ -1176,7 +1177,8 @@ async def top_skus(
         {"$limit": limit},
     ]
     rows = await db.orders.aggregate(pipeline).to_list(limit)
-    costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({}, {"_id": 0})}
+    skus_needed = [r["_id"] for r in rows]
+    costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({"sku": {"$in": skus_needed}}, {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1})}
     rates = await get_rates()
     out = []
     for r in rows:
@@ -1269,8 +1271,9 @@ async def profit_loss(
     user=Depends(get_current_user),
 ):
     match = build_match(date_from, date_to, parse_list(marketplaces), sku)
-    costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({}, {"_id": 0})}
     rates = await get_rates()
+    skus_in_scope = await db.orders.distinct("sku", match)
+    costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({"sku": {"$in": skus_in_scope}}, {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1})}
     pipeline = [
         {"$match": match} if match else {"$match": {}},
         {"$group": {
