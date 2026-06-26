@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 7: validated Loss-Making SKUs feature end-to-end + regression of prior pages. Backend: 17/17 pytest cases pass (8 loss-makers-specific + 9 regression). Frontend Playwright: sidebar 'nav-loss-makers' present, routes to /loss-makers, summary card shows '-€332.96 across 63 SKU × marketplace combos · 736 units sold at a loss', table renders 63 rows sorted by total_loss ascending (most negative first), marketplace chip click fires XHR with marketplaces=Amazon+Vendor param, EN/FR toggle switches label between 'Loss Makers' and 'Pertes'. All other pages (Dashboard, Products, Prices, Library, Profit & Loss, Heat Map, Orders, Customers, Uploads, Settings) load with zero console errors. No bugs found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/library/loss-makers", "issue": "Endpoint also returns extra useful fields not listed in the spec (orders, revenue_eur) which is fine — spec keys all present. Additional guardrail: rows are skipped if production_cost == 0 (server.py:1575), so SKUs with no cost data are silently excluded — this is documented in the UI but may hide true loss makers if cost ingestion is incomplete."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_loss_makers.py",
+    "/app/test_reports/pytest/iteration7_results.xml"
+  ],
+  "action_items": [
+    "(Carry-over from iter 6, not a Loss-Makers issue) Add admin-role check on POST /api/uploads/asin-mapping, /api/uploads/orders, /api/uploads/costs, PUT /api/cost-constants.",
+    "(Carry-over) server.py is now 1,772 lines — overdue for split into routers/."
+  ],
+  "critical_code_review_comments": [
+    "loss_makers endpoint (server.py:1529-1595) is clean: single aggregation pipeline, per-SKU/marketplace grouping, correct math: total_cost = production + operational + production_shipping[mk] + avg_price * commission[mk]/100. Sort by total_loss_eur ascending is correct (most negative first).",
+    "Guard `if net_per_unit < 0 and prod_cost > 0` correctly filters loss-makers AND avoids false positives from SKUs with no cost-catalog entry (would otherwise show every $0-cost SKU as a 'loss').",
+    "build_match() reused from existing dashboard endpoints — date_from/date_to/marketplaces filters work identically; verified single-marketplace filter returns only rows for that marketplace.",
+    "Math consistency verified within ±€0.05 rounding on first 10 rows: total_cost ≈ prod+op+ship+comm, net ≈ avg_price - total_cost, total_loss ≈ net * units.",
+    "Frontend page (LossMakers.jsx) correctly passes marketplaces param when chip clicked — XHR `?date_from=...&marketplaces=Amazon+Vendor` observed.",
+    "Sidebar data-testids are complete and consistent: nav-dashboard, nav-marketplaces, nav-products, nav-prices, nav-library, nav-loss-makers, nav-customers, nav-profit-loss, nav-orders, nav-heatmap, nav-uploads, nav-settings.",
+    "i18n keys (nav.loss_makers) wired correctly — verified 'Loss Makers' ↔ 'Pertes' switch via lang-en/lang-fr toggle."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_loss_makers.py (new — 17 tests: 8 loss-makers + 9 regression)"
+  ],
+  "success_rate": {
+    "backend": "100% (17/17 in test_loss_makers.py)",
+    "frontend": "100% (loss-makers nav, route, summary card, table, marketplace filter, EN/FR toggle, plus 7-page regression all green)"
+  },
+  "test_credentials": "admin@ambiancesticker.com / Ambiance2026! (verified)",
+  "seed_data_creation": "None — used existing DB state (63 loss-making SKU×marketplace combos, total margin bleed -€332.96 across 736 units).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Loss Makers feature fully verified. Endpoint GET /api/library/loss-makers returns 200, JWT-protected, supports date_from/date_to/marketplaces filters, sorted by total_loss_eur asc. Frontend page at /loss-makers renders summary card (data-testid='loss-summary'), table (data-testid='loss-table') with rows (data-testid='loss-row-{sku}'). Sidebar entry 'nav-loss-makers'. EN/FR keys 'Loss Makers'/'Pertes' work. To re-run: pytest /app/backend/tests/test_loss_makers.py -v (17 tests, ~6s).",
+  "rca of the issue": "No bugs found."
+}
