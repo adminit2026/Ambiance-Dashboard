@@ -1,5 +1,45 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
+import { useT } from "@/lib/i18n";
+
+function isoDate(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+function presetRange(key) {
+  const today = new Date();
+  const start = new Date(today);
+  switch (key) {
+    case "today":
+      return { from: isoDate(today), to: isoDate(today) };
+    case "wtd": {
+      const day = (today.getDay() + 6) % 7; // Mon=0
+      start.setDate(today.getDate() - day);
+      return { from: isoDate(start), to: isoDate(today) };
+    }
+    case "mtd":
+      return { from: isoDate(new Date(today.getFullYear(), today.getMonth(), 1)), to: isoDate(today) };
+    case "ytd":
+      return { from: isoDate(new Date(today.getFullYear(), 0, 1)), to: isoDate(today) };
+    case "last30":
+      start.setDate(today.getDate() - 29);
+      return { from: isoDate(start), to: isoDate(today) };
+    case "last90":
+      start.setDate(today.getDate() - 89);
+      return { from: isoDate(start), to: isoDate(today) };
+    default:
+      return null;
+  }
+}
+
+const PRESETS = [
+  { key: "today", labelKey: "filters.preset_today", fallback: "Today" },
+  { key: "wtd", labelKey: "filters.preset_wtd", fallback: "WTD" },
+  { key: "mtd", labelKey: "filters.preset_mtd", fallback: "MTD" },
+  { key: "last30", labelKey: "filters.preset_last30", fallback: "Last 30d" },
+  { key: "last90", labelKey: "filters.preset_last90", fallback: "Last 90d" },
+  { key: "ytd", labelKey: "filters.preset_ytd", fallback: "YTD" },
+];
 
 export function useFilters(initial = {}) {
   const today = new Date();
@@ -17,6 +57,7 @@ export function useFilters(initial = {}) {
 
 export default function FiltersBar({ filters, setFilters, showSku = true, rightSlot = null }) {
   const [marketplaces, setMarketplaces] = useState([]);
+  const { t } = useT();
   useEffect(() => {
     api.get("/marketplaces").then((r) => setMarketplaces(r.data)).catch(() => {});
   }, []);
@@ -27,13 +68,26 @@ export default function FiltersBar({ filters, setFilters, showSku = true, rightS
     setFilters({ ...filters, marketplaces: next.join(",") });
   };
 
+  const applyPreset = (key) => {
+    const r = presetRange(key);
+    if (r) setFilters({ ...filters, date_from: r.from, date_to: r.to });
+  };
+
+  const activePreset = (() => {
+    for (const p of PRESETS) {
+      const r = presetRange(p.key);
+      if (r && r.from === filters.date_from && r.to === filters.date_to) return p.key;
+    }
+    return null;
+  })();
+
   const selected = filters.marketplaces ? filters.marketplaces.split(",") : [];
 
   return (
     <div className="surface border-b border-l-0 border-r-0 border-t-0 px-8 py-4 sticky top-0 z-20 bg-white" data-testid="filters-bar">
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col">
-          <label className="eyebrow mb-1">From</label>
+          <label className="eyebrow mb-1">{t("filters.from") || "From"}</label>
           <input
             type="date"
             data-testid="filter-date-from"
@@ -43,7 +97,7 @@ export default function FiltersBar({ filters, setFilters, showSku = true, rightS
           />
         </div>
         <div className="flex flex-col">
-          <label className="eyebrow mb-1">To</label>
+          <label className="eyebrow mb-1">{t("filters.to") || "To"}</label>
           <input
             type="date"
             data-testid="filter-date-to"
@@ -52,9 +106,28 @@ export default function FiltersBar({ filters, setFilters, showSku = true, rightS
             onChange={(e) => setFilters({ ...filters, date_to: e.target.value })}
           />
         </div>
+        <div className="flex flex-col">
+          <label className="eyebrow mb-1">{t("filters.presets") || "Quick range"}</label>
+          <div className="flex flex-wrap gap-1.5" data-testid="filter-presets">
+            {PRESETS.map((p) => {
+              const active = activePreset === p.key;
+              return (
+                <button
+                  key={p.key}
+                  data-testid={`filter-preset-${p.key}`}
+                  onClick={() => applyPreset(p.key)}
+                  className="pill transition-colors"
+                  style={active ? { background: "#0055FF", color: "white", borderColor: "transparent" } : {}}
+                >
+                  {t(p.labelKey) || p.fallback}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         {showSku && (
           <div className="flex flex-col">
-            <label className="eyebrow mb-1">SKU contains</label>
+            <label className="eyebrow mb-1">{t("filters.sku") || "SKU contains"}</label>
             <input
               type="text"
               placeholder="e.g. SAND_"
@@ -66,7 +139,7 @@ export default function FiltersBar({ filters, setFilters, showSku = true, rightS
           </div>
         )}
         <div className="flex flex-col">
-          <label className="eyebrow mb-1">Marketplaces</label>
+          <label className="eyebrow mb-1">{t("filters.marketplaces") || "Marketplaces"}</label>
           <div className="flex flex-wrap gap-1.5" data-testid="filter-marketplaces">
             {marketplaces.length === 0 && (
               <span className="text-xs text-[#5E636E]">Upload orders to populate</span>

@@ -10,6 +10,7 @@ import Products from "@/pages/Products";
 import Prices from "@/pages/Prices";
 import Library from "@/pages/Library";
 import LossMakers from "@/pages/LossMakers";
+import Returns from "@/pages/Returns";
 import Customers from "@/pages/Customers";
 import ProfitLoss from "@/pages/ProfitLoss";
 import Orders from "@/pages/Orders";
@@ -48,6 +49,7 @@ function App() {
               <Route path="prices" element={<Prices />} />
               <Route path="library" element={<Library />} />
               <Route path="loss-makers" element={<LossMakers />} />
+              <Route path="returns" element={<Returns />} />
               <Route path="customers" element={<Customers />} />
               <Route path="profit-loss" element={<ProfitLoss />} />
               <Route path="orders" element={<Orders />} />
