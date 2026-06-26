@@ -1526,6 +1526,75 @@ CANONICAL_MARKETPLACES = [
 ]
 
 
+@api.get("/library/loss-makers")
+async def loss_makers(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    marketplaces: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """Return per-SKU per-marketplace combos where net profit/unit < 0.
+    Net/unit = avg_unit_price − (production_cost + operational_cost + production_shipping[mk] + avg_price × commission[mk]/100)
+    """
+    match = build_match(date_from, date_to, parse_list(marketplaces), None)
+    constants = await get_cost_constants()
+    op_cost = float(constants["operational_cost_per_unit"])
+    mk_shipping = constants["production_shipping_by_marketplace"] or {}
+    mk_commission = constants["commission_by_marketplace"] or {}
+
+    pipeline = [
+        {"$match": match} if match else {"$match": {}},
+        {"$match": {"unit_price": {"$gt": 0}}},
+        {"$group": {
+            "_id": {"sku": "$sku", "marketplace": "$marketplace"},
+            "product_name": {"$first": "$product_name"},
+            "units": {"$sum": "$quantity"},
+            "revenue": {"$sum": "$line_total_eur"},
+            "orders": {"$addToSet": "$order_id"},
+        }},
+    ]
+    rows = await db.orders.aggregate(pipeline).to_list(50000)
+    skus = list({r["_id"]["sku"] for r in rows if r["_id"]["sku"]})
+    costs_map = {c["sku"]: c async for c in db.costs.find({"sku": {"$in": skus}}, {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1})}
+
+    out = []
+    for r in rows:
+        sku = r["_id"]["sku"]
+        mk = r["_id"]["marketplace"] or "Unknown"
+        units = int(r["units"] or 0)
+        revenue = float(r["revenue"] or 0)
+        if units == 0:
+            continue
+        avg_price = revenue / units
+        c = costs_map.get(sku, {})
+        prod_cost = float(c.get("cost_per_unit", 0))
+        prod_ship = float(mk_shipping.get(mk, 0))
+        commission_per_unit = avg_price * float(mk_commission.get(mk, 0)) / 100.0
+        total_cost_per_unit = prod_cost + op_cost + prod_ship + commission_per_unit
+        net_per_unit = avg_price - total_cost_per_unit
+        if net_per_unit < 0 and prod_cost > 0:  # only flag if we have actual cost data
+            total_loss = net_per_unit * units
+            out.append({
+                "sku": sku,
+                "marketplace": mk,
+                "product_name": r.get("product_name") or "",
+                "units": units,
+                "orders": len(r["orders"]),
+                "avg_unit_price": round(avg_price, 2),
+                "production_cost": round(prod_cost, 2),
+                "operational_cost": round(op_cost, 2),
+                "production_shipping": round(prod_ship, 2),
+                "commission_per_unit": round(commission_per_unit, 2),
+                "total_cost_per_unit": round(total_cost_per_unit, 2),
+                "net_per_unit": round(net_per_unit, 2),
+                "total_loss_eur": round(total_loss, 2),
+                "revenue_eur": round(revenue, 2),
+            })
+    # Sort by biggest total loss (most negative)
+    out.sort(key=lambda x: x["total_loss_eur"])
+    return out
+
+
 @api.get("/marketplaces")
 async def list_marketplaces(user=Depends(get_current_user)):
     mks = await db.orders.distinct("marketplace")
