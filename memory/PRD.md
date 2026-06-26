@@ -42,10 +42,14 @@ CDiscount, Maison, Leroy Merlin, Mano Mano (was MONECHELLE), PinkConnect Veepee 
 - Marketplace fees/commissions deduction in P&L.
 - Server-side: split server.py into routers, add role checks, batch large mongo aggregations.
 
+### Iteration 3 (2026-02 fork)
+- **Loss-Making SKUs view** (`/loss-makers`) — flags SKU × marketplace combos where avg unit price minus (production + operational + production shipping + commission) is negative. Sorted by largest total bleed first. Skips SKUs with no cost data to avoid false positives. EN/FR i18n (`Loss Makers` / `Pertes`). Backend `GET /api/library/loss-makers` (JWT-protected, supports date_from / date_to / marketplaces filters). Verified iter 7: 17/17 backend tests + full frontend regression green. Current DB state: 63 loss-making combos, -€332.96 bleed across 736 units.
+
 ## Next Tasks (P1)
-1. ASIN→Merchant-SKU mapping upload (new endpoint + UI).
-2. Fresh May data ingestion + verification.
+1. Admin role check on POST /api/uploads/* and PUT /api/cost-constants (carry-over).
+2. Split `server.py` (1,772 lines) into routers: `orders.py`, `costs.py`, `uploads.py`, `library.py`.
 3. Date-range preset chips on FiltersBar.
+4. Returns / refunds surfacing.
 
 ## Credentials
 - admin@ambiancesticker.com / Ambiance2026!
