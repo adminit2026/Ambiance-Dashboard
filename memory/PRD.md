@@ -45,11 +45,16 @@ CDiscount, Maison, Leroy Merlin, Mano Mano (was MONECHELLE), PinkConnect Veepee 
 ### Iteration 3 (2026-02 fork)
 - **Loss-Making SKUs view** (`/loss-makers`) — flags SKU × marketplace combos where avg unit price minus (production + operational + production shipping + commission) is negative. Sorted by largest total bleed first. Skips SKUs with no cost data to avoid false positives. EN/FR i18n (`Loss Makers` / `Pertes`). Backend `GET /api/library/loss-makers` (JWT-protected, supports date_from / date_to / marketplaces filters). Verified iter 7: 17/17 backend tests + full frontend regression green. Current DB state: 63 loss-making combos, -€332.96 bleed across 736 units.
 
+### Iteration 4 (2026-02 fork)
+- **Admin-role guard** — added `require_admin` dependency, applied to every write endpoint: `POST /api/uploads/orders|costs|asin-mapping`, `PUT /api/cost-constants`, `PUT /api/exchange-rates`, `POST /api/admin/renormalize-marketplaces`, `POST /api/admin/reprocess-amazon-asins`, `POST /api/costs/manual`, `DELETE /api/costs/{sku}`. Read endpoints unchanged (auth-only).
+- **Returns & Refunds page** (`/returns`) — new dashboard surfacing refunded / returned / cancelled orders broken down by marketplace, with 4 KPI cards (refund total, cancel total, refund rate %, cancel rate %), a per-marketplace table, and a recent-200-lines table. Backend `GET /api/dashboard/returns` with date_from/to/marketplaces/sku filters. Current data: 1.3% refund rate (€1,516.59) and 0.7% cancel rate (€787.16) across 6 marketplaces.
+- **Date-range preset chips** on FiltersBar: Today / WTD / MTD / Last 30d / Last 90d / YTD. Active chip highlights blue. EN/FR labels.
+- **Backend split into routers** — `server.py` shrunk from 1,882 → 103 lines. Shared primitives moved to `/app/backend/core.py` (db, models, auth, parsers, util, settings store, marketplace normalization). Route handlers split into `/app/backend/routes/{auth, uploads, costs, dashboard, orders, library}.py`. Verified iter 8: 50/52 backend tests pass + 100% frontend regression (13 sidebar links, 6 preset chips, 6 returns testids, EN/FR toggle, 0 console errors).
+
 ## Next Tasks (P1)
-1. Admin role check on POST /api/uploads/* and PUT /api/cost-constants (carry-over).
-2. Split `server.py` (1,772 lines) into routers: `orders.py`, `costs.py`, `uploads.py`, `library.py`.
-3. Date-range preset chips on FiltersBar.
-4. Returns / refunds surfacing.
+1. Date-range presets — server-side default on `/api/dashboard/summary` and `/api/library/loss-makers` so unfiltered API consumers see same numbers as UI (optional polish).
+2. Email alert when a new SKU becomes a loss-maker.
+3. Suggested-new-price column on Loss Makers page (target margin auto-compute).
 
 ## Credentials
 - admin@ambiancesticker.com / Ambiance2026!
