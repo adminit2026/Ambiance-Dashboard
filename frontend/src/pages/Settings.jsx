@@ -14,7 +14,7 @@ export default function Settings() {
   const [busy, setBusy] = useState(false);
   const [manual, setManual] = useState({ sku: "", cost_per_unit: "", shipping_cost: "", currency: "EUR" });
   const [marketplaces, setMarketplaces] = useState([]);
-  const [constants, setConstants] = useState({ operational_cost_per_unit: 0.5, production_shipping_by_marketplace: {} });
+  const [constants, setConstants] = useState({ operational_cost_per_unit: 0.5, production_shipping_by_marketplace: {}, commission_by_marketplace: {} });
 
   const loadRates = () => api.get("/exchange-rates").then((r) => { setRates(r.data); setDraftRates(r.data); });
   const loadCosts = () => api.get("/costs").then((r) => setCosts(r.data));
@@ -22,6 +22,7 @@ export default function Settings() {
   const loadConstants = () => api.get("/cost-constants").then((r) => setConstants({
     operational_cost_per_unit: r.data.operational_cost_per_unit ?? 0.5,
     production_shipping_by_marketplace: r.data.production_shipping_by_marketplace || {},
+    commission_by_marketplace: r.data.commission_by_marketplace || {},
   }));
 
   useEffect(() => { loadRates(); loadCosts(); loadMks(); loadConstants(); }, []);
@@ -51,9 +52,15 @@ export default function Settings() {
         const n = Number(v);
         if (!isNaN(n) && n >= 0) ship[k] = n;
       });
+      const comm = {};
+      Object.entries(constants.commission_by_marketplace || {}).forEach(([k, v]) => {
+        const n = Number(v);
+        if (!isNaN(n) && n >= 0) comm[k] = n;
+      });
       const { data } = await api.put("/cost-constants", {
         operational_cost_per_unit: op,
         production_shipping_by_marketplace: ship,
+        commission_by_marketplace: comm,
       });
       setConstants(data);
       toast.success("Cost constants saved");
@@ -123,7 +130,7 @@ export default function Settings() {
           </div>
 
           <label className="eyebrow block mb-2">{t("settings.prod_shipping_mk")}</label>
-          <div className="space-y-2 max-h-[260px] overflow-y-auto" data-testid="prod-shipping-list">
+          <div className="space-y-2 max-h-[220px] overflow-y-auto" data-testid="prod-shipping-list">
             {marketplaces.length === 0 && (
               <div className="text-xs text-[#5E636E]">Upload orders first to populate marketplaces.</div>
             )}
@@ -146,6 +153,31 @@ export default function Settings() {
                   data-testid={`prod-shipping-${mk}`}
                 />
                 <span className="text-xs text-[#5E636E]">EUR / unit</span>
+              </div>
+            ))}
+          </div>
+
+          <label className="eyebrow block mb-2 mt-6">Commission % by marketplace</label>
+          <div className="space-y-2 max-h-[220px] overflow-y-auto" data-testid="commission-list">
+            {marketplaces.map((mk) => (
+              <div key={mk} className="flex items-center gap-3">
+                <div className="w-44 text-sm">{mk}</div>
+                <input
+                  type="number"
+                  step="0.1"
+                  className="in w-32"
+                  placeholder="0.0"
+                  value={constants.commission_by_marketplace[mk] ?? ""}
+                  onChange={(e) => setConstants({
+                    ...constants,
+                    commission_by_marketplace: {
+                      ...constants.commission_by_marketplace,
+                      [mk]: e.target.value,
+                    },
+                  })}
+                  data-testid={`commission-${mk}`}
+                />
+                <span className="text-xs text-[#5E636E]">% of revenue</span>
               </div>
             ))}
           </div>

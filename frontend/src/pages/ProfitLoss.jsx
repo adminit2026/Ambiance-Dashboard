@@ -22,9 +22,10 @@ export default function ProfitLoss() {
       shipping: acc.shipping + r.shipping_eur,
       operational: acc.operational + (r.operational_eur || 0),
       prod_shipping: acc.prod_shipping + (r.production_shipping_eur || 0),
+      commission: acc.commission + (r.commission_eur || 0),
       net: acc.net + r.net_profit_eur,
     }),
-    { revenue: 0, cogs: 0, shipping: 0, operational: 0, prod_shipping: 0, net: 0 }
+    { revenue: 0, cogs: 0, shipping: 0, operational: 0, prod_shipping: 0, commission: 0, net: 0 }
   );
 
   return (
@@ -49,6 +50,7 @@ export default function ProfitLoss() {
               <Row label={t("pnl.cogs")} rows={rows} get={(r) => -r.cogs_eur} totalVal={-total.cogs} muted />
               <Row label={t("pnl.operational")} rows={rows} get={(r) => -(r.operational_eur || 0)} totalVal={-total.operational} muted />
               <Row label={t("pnl.prod_shipping")} rows={rows} get={(r) => -(r.production_shipping_eur || 0)} totalVal={-total.prod_shipping} muted />
+              <Row label="− Commission" rows={rows} get={(r) => -(r.commission_eur || 0)} totalVal={-total.commission} muted />
               <Row label={t("pnl.shipping")} rows={rows} get={(r) => -r.shipping_eur} totalVal={-total.shipping} muted />
               <tr><td colSpan={rows.length + 2} style={{ background: "#F7F7F8", height: 4, padding: 0 }} /></tr>
               <Row label={t("pnl.net_profit")} rows={rows} get={(r) => r.net_profit_eur} totalVal={total.net} bold accent />

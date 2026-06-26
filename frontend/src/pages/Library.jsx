@@ -99,16 +99,17 @@ export default function Library() {
                 <SortHead kk="production_cost" align="right">{t("library.col_production_cost")}</SortHead>
                 <SortHead kk="operational_cost" align="right">{t("library.col_operational_cost")}</SortHead>
                 <SortHead kk="production_shipping_cost" align="right">{t("library.col_shipping_cost")}</SortHead>
+                <SortHead kk="commission_pct" align="right">Commission %</SortHead>
                 <SortHead kk="total_cost" align="right">{t("library.col_total")}</SortHead>
                 <SortHead kk="units_sold" align="right">{t("library.col_units")}</SortHead>
               </tr>
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={7} className="text-center py-12 text-[#5E636E]">{t("common.loading")}</td></tr>
+                <tr><td colSpan={8} className="text-center py-12 text-[#5E636E]">{t("common.loading")}</td></tr>
               )}
               {!loading && filtered.length === 0 && (
-                <tr><td colSpan={7} className="text-center py-12 text-[#5E636E]">{t("library.no_results")}</td></tr>
+                <tr><td colSpan={8} className="text-center py-12 text-[#5E636E]">{t("library.no_results")}</td></tr>
               )}
               {!loading && filtered.map((r) => (
                 <tr key={r.sku} data-testid={`library-row-${r.sku}`}>
@@ -116,7 +117,8 @@ export default function Library() {
                   <td className="max-w-[400px] truncate text-[#5E636E]" title={r.product_name}>{r.product_name || "—"}</td>
                   <td className="text-right font-mono-num">{r.has_cost ? fmtEur(r.production_cost) : <span className="text-[#D5D7DC]">—</span>}</td>
                   <td className="text-right font-mono-num text-[#5E636E]">{fmtEur(r.operational_cost)}</td>
-                  <td className="text-right font-mono-num text-[#5E636E]">{r.has_cost ? fmtEur(r.production_shipping_cost) : <span className="text-[#D5D7DC]">—</span>}</td>
+                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEur(r.production_shipping_cost)}</td>
+                  <td className="text-right font-mono-num text-[#5E636E]">{r.commission_pct ? `${r.commission_pct.toFixed(1)}%` : <span className="text-[#D5D7DC]">—</span>}</td>
                   <td className="text-right font-mono-num font-semibold">{r.has_cost ? fmtEur(r.total_cost) : <span className="text-[#D5D7DC]">—</span>}</td>
                   <td className="text-right font-mono-num text-[#5E636E]">{fmtNum(r.units_sold)}</td>
                 </tr>
