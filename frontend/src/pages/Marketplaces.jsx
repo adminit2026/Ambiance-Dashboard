@@ -11,6 +11,7 @@ import {
 export default function Marketplaces() {
   const { filters, setFilters, params } = useFilters();
   const [breakdown, setBreakdown] = useState([]);
+  const [byCountry, setByCountry] = useState([]);
   const [trend, setTrend] = useState([]);
   const [active, setActive] = useState(null);
 
@@ -19,6 +20,7 @@ export default function Marketplaces() {
       setBreakdown(r.data);
       if (!active && r.data.length > 0) setActive(r.data[0].marketplace);
     });
+    api.get("/dashboard/marketplace-country-breakdown", { params }).then((r) => setByCountry(r.data));
     api.get("/dashboard/trend", { params: { ...params, granularity: "month" } }).then((r) => setTrend(r.data));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(filters)]);
@@ -26,6 +28,7 @@ export default function Marketplaces() {
   const monthly = trend.map((d) => ({ period: d.period, ...d.by_marketplace }));
   const allMks = Array.from(new Set(trend.flatMap((d) => Object.keys(d.by_marketplace || {}))));
   const activeData = breakdown.find((b) => b.marketplace === active);
+  const activeCountries = byCountry.find((b) => b.marketplace === active)?.countries || [];
 
   return (
     <div>
@@ -60,6 +63,44 @@ export default function Marketplaces() {
           <Kpi label="Orders" value={fmtNum(activeData.orders)} />
           <Kpi label="Units" value={fmtNum(activeData.units)} />
           <Kpi label="AOV" value={fmtEur(activeData.aov_eur)} />
+        </section>
+      )}
+
+      {activeCountries.length > 0 && (
+        <section className="px-8 py-6">
+          <div className="surface overflow-x-auto" data-testid="mk-country-breakdown">
+            <div className="px-6 pt-5 pb-3">
+              <div className="eyebrow">Country split</div>
+              <h3 className="font-display text-lg font-semibold mt-1">{active} by country</h3>
+            </div>
+            <table className="dense w-full">
+              <thead>
+                <tr>
+                  <th>Country</th>
+                  <th className="text-right">Revenue</th>
+                  <th className="text-right">Orders</th>
+                  <th className="text-right">Units</th>
+                  <th className="text-right">AOV</th>
+                  <th className="text-right">% of {active}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activeCountries.map((c) => {
+                  const pct = activeData.revenue_eur ? (c.revenue_eur / activeData.revenue_eur) * 100 : 0;
+                  return (
+                    <tr key={c.country} data-testid={`mk-country-${c.country}`}>
+                      <td className="font-mono-num">{c.country}</td>
+                      <td className="text-right font-mono-num font-semibold">{fmtEur(c.revenue_eur)}</td>
+                      <td className="text-right font-mono-num">{fmtNum(c.orders)}</td>
+                      <td className="text-right font-mono-num">{fmtNum(c.units)}</td>
+                      <td className="text-right font-mono-num">{fmtEur(c.aov_eur)}</td>
+                      <td className="text-right font-mono-num text-[#5E636E]">{pct.toFixed(1)}%</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
 

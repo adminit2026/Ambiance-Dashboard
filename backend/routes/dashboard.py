@@ -1,6 +1,6 @@
 """Dashboard endpoints: summary, returns, trend, marketplace-breakdown,
 top-skus, customers, heatmap, profit-loss."""
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, Depends, Query
 
@@ -63,12 +63,16 @@ async def dashboard_summary(
         operational_total += op_cost * qty
         prod_shipping_total += float(mk_shipping.get(mk, 0)) * qty
         commission_total += float(o.get("line_total_eur") or 0) * float(mk_commission.get(mk, 0)) / 100.0
-    total_costs = cogs + shipping + operational_total + prod_shipping_total + commission_total
-    margin = revenue - total_costs
-    margin_pct = (margin / revenue * 100) if revenue else 0
+    # Customer-paid shipping is income, not an expense — add it to revenue.
+    total_revenue = revenue + shipping
+    total_costs = cogs + operational_total + prod_shipping_total + commission_total
+    margin = total_revenue - total_costs
+    margin_pct = (margin / total_revenue * 100) if total_revenue else 0
     return {
         "revenue_eur": round(revenue, 2),
         "shipping_eur": round(shipping, 2),
+        "shipping_income_eur": round(shipping, 2),
+        "total_revenue_eur": round(total_revenue, 2),
         "orders": orders_count,
         "units": units,
         "lines": lines,
@@ -244,6 +248,144 @@ async def marketplace_breakdown(
     } for r in rows]
 
 
+@router.get("/dashboard/marketplace-country-breakdown")
+async def marketplace_country_breakdown(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    marketplaces: Optional[str] = None,
+    sku: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """Same breakdown as /dashboard/marketplace-breakdown but split per (marketplace, country).
+    Useful for marketplaces that span multiple countries (e.g. Leroy Merlin → FR/ES/IT/PT/PL).
+    """
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    pipeline = [
+        {"$match": match} if match else {"$match": {}},
+        {"$group": {
+            "_id": {"mk": "$marketplace", "country": "$country"},
+            "revenue": {"$sum": "$line_total_eur"},
+            "shipping": {"$sum": "$shipping_cost_eur"},
+            "units": {"$sum": "$quantity"},
+            "orders": {"$addToSet": "$order_id"},
+        }},
+        {"$sort": {"revenue": -1}},
+    ]
+    rows = await db.orders.aggregate(pipeline).to_list(2000)
+    # Group children under their marketplace parent
+    parents: Dict[str, dict] = {}
+    for r in rows:
+        mk = r["_id"]["mk"] or "Unknown"
+        country = (r["_id"]["country"] or "").strip() or "—"
+        rev = float(r["revenue"] or 0)
+        ship = float(r["shipping"] or 0)
+        units = int(r["units"] or 0)
+        n_orders = len(r["orders"])
+        p = parents.setdefault(mk, {
+            "marketplace": mk,
+            "revenue_eur": 0.0,
+            "shipping_eur": 0.0,
+            "units": 0,
+            "orders": 0,
+            "countries": [],
+        })
+        p["revenue_eur"] += rev
+        p["shipping_eur"] += ship
+        p["units"] += units
+        p["orders"] += n_orders
+        p["countries"].append({
+            "country": country,
+            "revenue_eur": round(rev, 2),
+            "shipping_eur": round(ship, 2),
+            "units": units,
+            "orders": n_orders,
+            "aov_eur": round(rev / n_orders, 2) if n_orders else 0,
+        })
+    out = []
+    for p in parents.values():
+        p["revenue_eur"] = round(p["revenue_eur"], 2)
+        p["shipping_eur"] = round(p["shipping_eur"], 2)
+        p["aov_eur"] = round(p["revenue_eur"] / p["orders"], 2) if p["orders"] else 0
+        p["countries"].sort(key=lambda x: x["revenue_eur"], reverse=True)
+        out.append(p)
+    out.sort(key=lambda x: x["revenue_eur"], reverse=True)
+    return out
+
+
+@router.get("/dashboard/amazon-delivery")
+async def amazon_delivery(
+    delivery_from: Optional[str] = None,
+    delivery_to: Optional[str] = None,
+    sku: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """Amazon Vendor view filtered by DELIVERY date (Window end) instead of order date.
+    Revenue stays attributed to its booking/order date (`order_date_iso`) — only the
+    filtering window changes. Used to track upcoming/recent shipments without misstating
+    the period in which revenue was earned.
+    """
+    match: Dict[str, Any] = {"source": "amazon_po", "delivery_date_iso": {"$ne": None}}
+    if delivery_from or delivery_to:
+        d_range: Dict[str, Any] = {}
+        if delivery_from:
+            d_range["$gte"] = delivery_from
+        if delivery_to:
+            d_range["$lte"] = delivery_to + "T23:59:59"
+        match["delivery_date_iso"] = {**match["delivery_date_iso"], **d_range}
+    if sku:
+        import re
+        match["sku"] = {"$regex": re.escape(sku), "$options": "i"}
+
+    # Per-PO summary so user sees each shipment
+    pipeline = [
+        {"$match": match},
+        {"$group": {
+            "_id": {"po": "$order_id", "delivery": "$delivery_date_iso", "window_start": "$window_start_date_iso"},
+            "order_date_iso": {"$min": "$order_date_iso"},
+            "warehouse": {"$first": "$country"},
+            "status": {"$first": "$status"},
+            "units": {"$sum": "$quantity"},
+            "revenue_eur": {"$sum": "$line_total_eur"},
+            "lines": {"$sum": 1},
+        }},
+        {"$sort": {"_id.delivery": 1}},
+    ]
+    pos = await db.orders.aggregate(pipeline).to_list(10000)
+    out_pos = [{
+        "po": p["_id"]["po"],
+        "delivery_date": (p["_id"]["delivery"] or "")[:10],
+        "window_start": (p["_id"].get("window_start") or "")[:10],
+        "order_date": (p.get("order_date_iso") or "")[:10],
+        "warehouse": p.get("warehouse") or "",
+        "status": p.get("status") or "",
+        "units": int(p.get("units") or 0),
+        "lines": int(p.get("lines") or 0),
+        "revenue_eur": round(float(p.get("revenue_eur") or 0), 2),
+    } for p in pos]
+
+    # KPI totals
+    totals = {
+        "pos": len({p["po"] for p in out_pos}),
+        "units": sum(p["units"] for p in out_pos),
+        "revenue_eur": round(sum(p["revenue_eur"] for p in out_pos), 2),
+        "delivery_lines": len(out_pos),
+    }
+
+    # Group by delivery date
+    by_day: Dict[str, dict] = {}
+    for p in out_pos:
+        d = p["delivery_date"] or "—"
+        slot = by_day.setdefault(d, {"delivery_date": d, "pos": 0, "units": 0, "revenue_eur": 0.0})
+        slot["pos"] += 1
+        slot["units"] += p["units"]
+        slot["revenue_eur"] += p["revenue_eur"]
+    timeline = sorted(by_day.values(), key=lambda x: x["delivery_date"])
+    for slot in timeline:
+        slot["revenue_eur"] = round(slot["revenue_eur"], 2)
+
+    return {"totals": totals, "timeline": timeline, "pos": out_pos}
+
+
 @router.get("/dashboard/top-skus")
 async def top_skus(
     limit: int = 25,
@@ -390,27 +532,31 @@ async def profit_loss(
     for r in base:
         mk = r["_id"] or "Unknown"
         rev = float(r["revenue"] or 0)
-        ship = float(r["shipping"] or 0)
+        ship_income = float(r["shipping"] or 0)  # customer-paid shipping = income
         units = int(r["units"] or 0)
         cogs = cogs_per_mk.get(mk, 0)
         op_total = op_cost * units
         prod_ship = float(mk_shipping.get(mk, 0)) * units
+        # Commission is computed on gross revenue (line totals), not on shipping income
         commission_eur = float(mk_commission.get(mk, 0)) / 100.0 * rev
-        net = rev - cogs - ship - op_total - prod_ship - commission_eur
+        total_revenue = rev + ship_income
+        net = total_revenue - cogs - op_total - prod_ship - commission_eur
         out.append({
             "marketplace": mk,
             "revenue_eur": round(rev, 2),
+            "shipping_income_eur": round(ship_income, 2),
+            "total_revenue_eur": round(total_revenue, 2),
             "cogs_eur": round(cogs, 2),
-            "shipping_eur": round(ship, 2),
+            "shipping_eur": round(ship_income, 2),  # kept for backward compat
             "operational_eur": round(op_total, 2),
             "production_shipping_eur": round(prod_ship, 2),
             "commission_eur": round(commission_eur, 2),
             "commission_pct": float(mk_commission.get(mk, 0)),
             "vat_eur": round(float(r["vat"] or 0), 2),
             "net_profit_eur": round(net, 2),
-            "margin_pct": round((net / rev * 100) if rev else 0, 2),
+            "margin_pct": round((net / total_revenue * 100) if total_revenue else 0, 2),
             "units": units,
             "orders": len(r["orders"]),
         })
-    out.sort(key=lambda x: x["revenue_eur"], reverse=True)
+    out.sort(key=lambda x: x["total_revenue_eur"], reverse=True)
     return out

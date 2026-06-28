@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 9: validated (1) P&L treats Customer Shipping as ADDED revenue (Gross + Shipping = Total Revenue; Net excludes shipping subtraction), (2) new Amazon Edit Line Items XLSX upload auto-detected as 'amazon_edit' with PO::ASIN line_key merging, (3) /api/dashboard/amazon-delivery filtered by window-end (delivery date) with revenue staying on order/booking date, (4) /api/dashboard/marketplace-country-breakdown returning per-marketplace country split. Backend 21/21 pytest pass. Frontend: P&L renders all 9 rows in spec order (Gross Revenue, + Customer Shipping (income), = Total Revenue, − COGS, − Operational Cost, − Production Shipping, − Commission, Net Profit, Margin %). Leroy Merlin Net Profit €20,827.64 matches spec exactly. Marketplaces page renders mk-country-breakdown with all 5 country rows (FR €29,513.46 / ES €7,915.68 / IT €2,114.52 / PT €2,014.45 / PL €124.55) which sums to €41,682.66 marketplace revenue. Amazon Delivery page at /amazon-delivery has all 4 KPIs (pos/units/revenue/lines), timeline and POs tables with distinct delivery_date / window_start / order_date columns; FR toggle flips title to 'Livraisons Amazon'. All 14 sidebar links present (with one naming nit: nav-heatmap vs spec nav-heat-map). 0 console errors.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Sidebar Heat Map link", "issues": ["testid is 'nav-heatmap' (no dash) — spec lists it as 'nav-heat-map'. Link works, route /heatmap loads correctly. Minor naming inconsistency only; recommend renaming for consistency with the dashed naming used by every other sidebar testid (nav-amazon-delivery, nav-loss-makers, nav-profit-loss, nav-heat-map per spec)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration9.py",
+    "/app/test_reports/pytest/iteration9_results.xml"
+  ],
+  "action_items": [
+    "(Optional, low priority) Rename Heat Map sidebar testid from 'nav-heatmap' to 'nav-heat-map' for naming consistency with the rest of the dashed sidebar testids. Functional behaviour is already correct."
+  ],
+  "critical_code_review_comments": [
+    "P&L endpoint correctly exposes both revenue_eur and shipping_income_eur plus the derived total_revenue_eur and net_profit_eur. Math verified per-row: total_revenue == revenue + shipping_income (Leroy €41,682.66 + €5,636.79 = €47,319.45); net_profit == total_revenue − cogs − operational − production_shipping − commission. Shipping is NOT subtracted, matching the new business rule.",
+    "Dashboard summary now returns shipping_income_eur and total_revenue_eur. Margin formula reconciles to ±1.5pp vs. the calculated value, confirming shipping income is no longer being subtracted.",
+    "Amazon Edit Line Items upload: POST /api/uploads/orders with source='auto' on edit_line_items.xlsx is correctly auto-detected as amazon_edit (rows_total=66, source='amazon_edit'). The PO::ASIN line_key successfully merges with existing Amazon PO rows so persisted documents carry delivery_date_iso (Window end), window_start_date_iso (Window start) and order_date_iso (Expected/booking date) side-by-side.",
+    "GET /api/dashboard/amazon-delivery returns the expected {totals, timeline, pos} shape with all required fields on each PO row (po, delivery_date, window_start, order_date, warehouse, status, units, lines, revenue_eur). Filter delivery_from/delivery_to=2026-07 confirmed: only July deliveries returned and each row has order_date 2026-06-24 (different from delivery_date 2026-07-07), proving revenue stays on order date while filtering by delivery window-end.",
+    "GET /api/dashboard/amazon-delivery requires auth (returns 401 without Bearer token). Verified.",
+    "GET /api/dashboard/marketplace-country-breakdown returns 13 marketplace rows, each with countries array. Leroy Merlin has 5 countries summing exactly to marketplace revenue €41,682.66 (FR 70.8% / ES 19.0% / IT 5.1% / PT 4.8% / PL 0.3%). Filter ?marketplaces=Leroy%20Merlin correctly returns only that marketplace.",
+    "Amazon Vendor's 'countries' list contains warehouse codes (CDG7, XOR1, ETZ2, …) rather than ISO-2 country codes — likely intentional since Vendor orders are warehouse-level rather than customer-country level, but worth noting in case the spec intended actual destination country for that marketplace.",
+    "ProfitLoss.jsx renders the table with rows in the exact spec order: Gross Revenue, '+ Customer Shipping (income)', '= Total Revenue', '− Cost of Goods Sold', '− Operational Cost', '− Production Shipping', '− Commission', 'Net Profit', 'Margin %' — verified visually.",
+    "Marketplaces.jsx mk-country-breakdown surface is gated on activeCountries.length > 0; renders correctly with data-testid='mk-country-breakdown' and per-row data-testid={`mk-country-${country}`} (mk-country-FR, mk-country-ES, mk-country-IT, mk-country-PT, mk-country-PL all present for Leroy Merlin).",
+    "AmazonDelivery page has its own delivery_from / delivery_to inputs (not bound to the global FiltersBar), correctly described in the page label 'Filtered by delivery window end. Revenue stays attributed to the order (booking) date.' KPI revenue label clarifies 'booked on the PO order date, not the delivery date'.",
+    "i18n: pnl.shipping_income, pnl.total_revenue, pnl.commission, nav.amazon_delivery and amazon.* keys all resolve; FR toggle flips 'Amazon Delivery' → 'Livraisons Amazon' (confirmed in DOM).",
+    "No console errors during full UI walk (Dashboard → Marketplaces → Profit & Loss → Amazon Delivery → EN/FR toggle)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration9.py (new — 21 tests across 6 test classes covering P&L math + LM spec values, summary shape, Amazon Edit upload auto-detect, Amazon Delivery shape/auth/filter/order-date-differs, marketplace-country breakdown sum check + filter, and 10 GET regression endpoints)"
+  ],
+  "success_rate": {
+    "backend": "100% (21/21 pytest passed)",
+    "frontend": "~99% (P&L rows correct, country breakdown renders with all 5 LM countries matching spec, Amazon Delivery page complete with KPIs + PO table columns, EN/FR works, 14/14 sidebar links present — only nit is the heatmap testid naming)"
+  },
+  "test_credentials": "admin@ambiancesticker.com / Ambiance2026! (verified, no lockout)",
+  "seed_data_creation": "Re-uploaded /tmp/edit_line_items.xlsx via POST /api/uploads/orders during test — idempotent because line_key=PO::ASIN; merges into existing rows.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 9 verified end-to-end. Login returns token under JSON key 'token' (NOT 'access_token'). All 13 marketplace tabs render with testids 'mk-tab-{Marketplace Name}' (including space, e.g. 'mk-tab-Leroy Merlin'); country sub-rows use 'mk-country-{ISO2}'. Amazon Delivery page: amazon-kpi-pos / -units / -revenue / -lines, amazon-timeline, amazon-pos. Heat Map sidebar testid is 'nav-heatmap' (no dash) — adjust regression scripts accordingly. P&L returns a plain JSON list of per-marketplace rows (not wrapped in {by_marketplace}); marketplace-country-breakdown also returns a plain list. Test file at /app/backend/tests/test_iteration9.py (21 tests, ~3s, pure pytest).",
+  "rca of the issue": "No bugs found. One cosmetic naming inconsistency: spec lists Heat Map sidebar testid as 'nav-heat-map' but Layout.jsx uses 'nav-heatmap' (no dash). The link is functional, /heatmap route loads, EN/FR labels work. Recommend a one-line rename if strict naming consistency is required, otherwise this is non-blocking."
+}

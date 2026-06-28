@@ -18,14 +18,15 @@ export default function ProfitLoss() {
   const total = rows.reduce(
     (acc, r) => ({
       revenue: acc.revenue + r.revenue_eur,
+      shipping_income: acc.shipping_income + (r.shipping_income_eur || r.shipping_eur || 0),
+      total_revenue: acc.total_revenue + (r.total_revenue_eur || r.revenue_eur),
       cogs: acc.cogs + r.cogs_eur,
-      shipping: acc.shipping + r.shipping_eur,
       operational: acc.operational + (r.operational_eur || 0),
       prod_shipping: acc.prod_shipping + (r.production_shipping_eur || 0),
       commission: acc.commission + (r.commission_eur || 0),
       net: acc.net + r.net_profit_eur,
     }),
-    { revenue: 0, cogs: 0, shipping: 0, operational: 0, prod_shipping: 0, commission: 0, net: 0 }
+    { revenue: 0, shipping_income: 0, total_revenue: 0, cogs: 0, operational: 0, prod_shipping: 0, commission: 0, net: 0 }
   );
 
   return (
@@ -47,14 +48,15 @@ export default function ProfitLoss() {
             </thead>
             <tbody>
               <Row label={t("pnl.gross_revenue")} rows={rows} get={(r) => r.revenue_eur} totalVal={total.revenue} bold />
+              <Row label={t("pnl.shipping_income")} rows={rows} get={(r) => (r.shipping_income_eur ?? r.shipping_eur ?? 0)} totalVal={total.shipping_income} />
+              <Row label={t("pnl.total_revenue")} rows={rows} get={(r) => (r.total_revenue_eur ?? r.revenue_eur)} totalVal={total.total_revenue} bold />
               <Row label={t("pnl.cogs")} rows={rows} get={(r) => -r.cogs_eur} totalVal={-total.cogs} muted />
               <Row label={t("pnl.operational")} rows={rows} get={(r) => -(r.operational_eur || 0)} totalVal={-total.operational} muted />
               <Row label={t("pnl.prod_shipping")} rows={rows} get={(r) => -(r.production_shipping_eur || 0)} totalVal={-total.prod_shipping} muted />
-              <Row label="− Commission" rows={rows} get={(r) => -(r.commission_eur || 0)} totalVal={-total.commission} muted />
-              <Row label={t("pnl.shipping")} rows={rows} get={(r) => -r.shipping_eur} totalVal={-total.shipping} muted />
+              <Row label={t("pnl.commission")} rows={rows} get={(r) => -(r.commission_eur || 0)} totalVal={-total.commission} muted />
               <tr><td colSpan={rows.length + 2} style={{ background: "#F7F7F8", height: 4, padding: 0 }} /></tr>
               <Row label={t("pnl.net_profit")} rows={rows} get={(r) => r.net_profit_eur} totalVal={total.net} bold accent />
-              <Row label={t("pnl.margin")} rows={rows} get={(r) => r.margin_pct} totalVal={total.revenue ? (total.net / total.revenue) * 100 : 0} pct />
+              <Row label={t("pnl.margin")} rows={rows} get={(r) => r.margin_pct} totalVal={total.total_revenue ? (total.net / total.total_revenue) * 100 : 0} pct />
             </tbody>
           </table>
         </div>

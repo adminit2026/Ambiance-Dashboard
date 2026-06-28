@@ -11,6 +11,7 @@ import Prices from "@/pages/Prices";
 import Library from "@/pages/Library";
 import LossMakers from "@/pages/LossMakers";
 import Returns from "@/pages/Returns";
+import AmazonDelivery from "@/pages/AmazonDelivery";
 import Customers from "@/pages/Customers";
 import ProfitLoss from "@/pages/ProfitLoss";
 import Orders from "@/pages/Orders";
@@ -50,6 +51,7 @@ function App() {
               <Route path="library" element={<Library />} />
               <Route path="loss-makers" element={<LossMakers />} />
               <Route path="returns" element={<Returns />} />
+              <Route path="amazon-delivery" element={<AmazonDelivery />} />
               <Route path="customers" element={<Customers />} />
               <Route path="profit-loss" element={<ProfitLoss />} />
               <Route path="orders" element={<Orders />} />

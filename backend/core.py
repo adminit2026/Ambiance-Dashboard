@@ -274,6 +274,9 @@ def detect_source(filename: str, headers: List[str]) -> str:
     fn = (filename or "").lower()
     cols = [c.lower() for c in headers]
     cols_set = set(cols)
+    # Amazon "Edit Line Items" export — richer than basic PO export (carries delivery window dates)
+    if "window end" in cols_set and "expected date" in cols_set and "po" in cols_set:
+        return "amazon_edit"
     if "po" in cols_set and "asin" in cols_set:
         return "amazon_po"
     if "marketplace" in cols_set and "order_marketplaceorderid" in cols_set:
@@ -284,6 +287,8 @@ def detect_source(filename: str, headers: List[str]) -> str:
         return "channelengine"
     if "beezup" in fn:
         return "beezup"
+    if "editlineitems" in fn:
+        return "amazon_edit"
     if "poitem" in fn or "amazon" in fn:
         return "amazon_po"
     return "unknown"
@@ -455,6 +460,79 @@ def parse_amazon_po(content: bytes) -> List[dict]:
             "status": status,
             "country": ship_to,
             "city": ship_to,
+            "customer_email": "",
+        })
+    return rows
+
+
+def parse_amazon_edit_line_items(content: bytes) -> List[dict]:
+    """Amazon 'Edit Line Items' export — same PO data as parse_amazon_po PLUS
+    delivery window dates. Columns: PO, Vendor, Warehouse, ASIN, External ID,
+    External Id Type, Model Number (= merchant SKU), Title, Availability (= status),
+    Window Type, Window start, Window end (= delivery date), Expected date (= order date),
+    Quantity Requested, Expected Quantity, Unit Cost.
+    Currency is in an unnamed column right after Unit Cost (typically 'EUR').
+    """
+    try:
+        df = pd.read_excel(io.BytesIO(content), sheet_name=0, dtype=str)
+    except Exception:
+        df = pd.read_excel(io.BytesIO(content), sheet_name=0, dtype=str, engine="openpyxl")
+    df = df.fillna("")
+
+    def s(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        return str(v).strip()
+
+    # Currency column may be unnamed (sits after Unit Cost)
+    currency_col = None
+    cols = list(df.columns)
+    if "Unit Cost" in cols:
+        idx = cols.index("Unit Cost")
+        if idx + 1 < len(cols):
+            currency_col = cols[idx + 1]
+
+    rows = []
+    for _, r in df.iterrows():
+        po = s(r.get("PO"))
+        asin = s(r.get("ASIN"))
+        merchant_sku = s(r.get("Model Number"))
+        sku = merchant_sku or asin
+        if not po or not sku or sku.lower() in ("nan", "none"):
+            continue
+        order_date = parse_date(r.get("Expected date"))
+        delivery_date = parse_date(r.get("Window end"))
+        window_start = parse_date(r.get("Window start"))
+        qty_exp = int(parse_number(r.get("Expected Quantity") or 0))
+        qty_req = int(parse_number(r.get("Quantity Requested") or 0))
+        qty = qty_exp or qty_req
+        unit_cost = parse_number(r.get("Unit Cost"))
+        line_total = unit_cost * qty
+        currency = (s(r.get(currency_col)) if currency_col else "") or "EUR"
+        warehouse = s(r.get("Warehouse"))
+        product_name = s(r.get("Title"))
+        status = s(r.get("Availability"))
+        rows.append({
+            "source": "amazon_po",  # keep same source so existing dashboards see it
+            "marketplace": "Amazon Vendor",
+            "channel_raw": "Amazon Vendor PO",
+            "order_id": po,
+            "line_key": f"{po}::{asin}",  # SAME line_key as parse_amazon_po so re-uploads merge
+            "sku": sku,
+            "asin": asin,
+            "product_name": product_name,
+            "quantity": qty,
+            "unit_price": unit_cost,
+            "line_total": line_total,
+            "shipping_cost": 0.0,
+            "vat": 0.0,
+            "currency": currency,
+            "order_date": order_date,
+            "delivery_date": delivery_date,
+            "window_start_date": window_start,
+            "status": status,
+            "country": warehouse,
+            "city": warehouse,
             "customer_email": "",
         })
     return rows

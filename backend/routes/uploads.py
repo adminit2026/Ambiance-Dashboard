@@ -12,6 +12,7 @@ import pandas as pd
 from core import (
     db, logger, get_current_user, require_admin,
     detect_source, parse_channelengine, parse_beezup, parse_amazon_po,
+    parse_amazon_edit_line_items,
     apply_asin_mapping, parse_asin_mapping, parse_cost_file,
     get_rates, to_eur, remap_amazon_orders,
 )
@@ -38,14 +39,17 @@ async def upload_orders(file: UploadFile = File(...), source: str = Form("auto")
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Could not detect source: {e}")
 
-    if source not in ("channelengine", "beezup", "amazon_po"):
-        raise HTTPException(status_code=400, detail=f"Unknown source '{source}'. Specify channelengine, beezup, or amazon_po.")
+    if source not in ("channelengine", "beezup", "amazon_po", "amazon_edit"):
+        raise HTTPException(status_code=400, detail=f"Unknown source '{source}'. Specify channelengine, beezup, amazon_po, or amazon_edit.")
 
     try:
         if source == "channelengine":
             rows = parse_channelengine(content)
         elif source == "beezup":
             rows = parse_beezup(content)
+        elif source == "amazon_edit":
+            rows = parse_amazon_edit_line_items(content)
+            rows = await apply_asin_mapping(rows)
         else:
             rows = parse_amazon_po(content)
             rows = await apply_asin_mapping(rows)
@@ -57,6 +61,11 @@ async def upload_orders(file: UploadFile = File(...), source: str = Form("auto")
     inserted, updated = 0, 0
     for r in rows:
         r["order_date_iso"] = r["order_date"].isoformat() if r["order_date"] else None
+        # Amazon edit line items: persist delivery / window-start iso strings too
+        if r.get("delivery_date"):
+            r["delivery_date_iso"] = r["delivery_date"].isoformat()
+        if r.get("window_start_date"):
+            r["window_start_date_iso"] = r["window_start_date"].isoformat()
         r["line_total_eur"] = to_eur(r["line_total"], r["currency"], rates)
         r["shipping_cost_eur"] = to_eur(r["shipping_cost"], r["currency"], rates)
         res = await db.orders.update_one(
