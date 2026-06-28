@@ -51,10 +51,16 @@ CDiscount, Maison, Leroy Merlin, Mano Mano (was MONECHELLE), PinkConnect Veepee 
 - **Date-range preset chips** on FiltersBar: Today / WTD / MTD / Last 30d / Last 90d / YTD. Active chip highlights blue. EN/FR labels.
 - **Backend split into routers** — `server.py` shrunk from 1,882 → 103 lines. Shared primitives moved to `/app/backend/core.py` (db, models, auth, parsers, util, settings store, marketplace normalization). Route handlers split into `/app/backend/routes/{auth, uploads, costs, dashboard, orders, library}.py`. Verified iter 8: 50/52 backend tests pass + 100% frontend regression (13 sidebar links, 6 preset chips, 6 returns testids, EN/FR toggle, 0 console errors).
 
+### Iteration 5 (2026-02 fork)
+- **P&L corrected** — Customer Shipping is now added to revenue (it's customer-paid income), not deducted from margin. New P&L row order: Gross Revenue → + Customer Shipping (income) → = Total Revenue → − COGS → − Operational Cost → − Production Shipping → − Commission → Net Profit → Margin %. Margin is computed against Total Revenue. Same change applied to /api/dashboard/summary.
+- **Amazon "Edit Line Items" parser + Delivery view** — auto-detects the new Amazon XLSX format (PO + Window end + Expected date columns), uses Model Number as merchant SKU, persists `delivery_date_iso` (Window end), `window_start_date_iso`, and `order_date_iso` (Expected date). Same PO::ASIN line_key merges with existing PO data. New page `/amazon-delivery` filters by delivery window-end while keeping revenue attributed to the order date. KPIs: POs delivering / Units shipping / Revenue (order-dated) / Lines. Backend: GET /api/dashboard/amazon-delivery.
+- **Marketplaces × Country breakdown** — Marketplaces page now shows a per-country split panel when a marketplace is active. Leroy Merlin → FR 70.8% / ES 19.0% / IT 5.1% / PT 4.8% / PL 0.3%. Backend: GET /api/dashboard/marketplace-country-breakdown. Aggregate Dashboard remains marketplace-level only.
+- Iter 9 verification: 21/21 backend pytest + full UI walk pass; 0 console errors.
+
 ## Next Tasks (P1)
-1. Date-range presets — server-side default on `/api/dashboard/summary` and `/api/library/loss-makers` so unfiltered API consumers see same numbers as UI (optional polish).
-2. Email alert when a new SKU becomes a loss-maker.
-3. Suggested-new-price column on Loss Makers page (target margin auto-compute).
+1. Suggested-new-price column on Loss Makers (auto target-margin compute).
+2. Returns CSV export and Loss Makers CSV export.
+3. Amazon Delivery: per-week aggregation toggle + CSV export.
 
 ## Credentials
 - admin@ambiancesticker.com / Ambiance2026!

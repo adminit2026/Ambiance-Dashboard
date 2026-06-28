@@ -32,7 +32,7 @@ const NAV = [
   { to: "/customers", key: "nav.customers", icon: Users, id: "nav-customers" },
   { to: "/profit-loss", key: "nav.profit_loss", icon: Receipt, id: "nav-profit-loss" },
   { to: "/orders", key: "nav.orders", icon: Table2, id: "nav-orders" },
-  { to: "/heatmap", key: "nav.heatmap", icon: Flame, id: "nav-heatmap" },
+  { to: "/heatmap", key: "nav.heatmap", icon: Flame, id: "nav-heat-map" },
   { to: "/uploads", key: "nav.uploads", icon: UploadCloud, id: "nav-uploads" },
   { to: "/settings", key: "nav.settings", icon: SettingsIcon, id: "nav-settings" },
 ];
