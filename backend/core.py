@@ -199,7 +199,6 @@ def to_eur(amount: float, currency: str, rates: Dict[str, float]) -> float:
 CANONICAL_MARKETPLACES = [
     "Amazon Vendor",
     "Ambiance Web",
-    "Appros",
     "BOL.COM",
     "CDiscount",
     "Castorama",
@@ -212,7 +211,6 @@ CANONICAL_MARKETPLACES = [
     "PinkConnect Veepee - BE",
     "PinkConnect Veepee - FR",
     "PinkConnect Veepee - NL",
-    "Zooplus",
 ]
 
 
@@ -263,10 +261,6 @@ def channel_to_marketplace(channel_name: str) -> str:
         return "Kaufland"
     if "mano" in low:
         return "Mano Mano"
-    if "zooplus" in low or "zoo plus" in low:
-        return "Zooplus"
-    if "appros" in low:
-        return "Appros"
     return n
 
 
