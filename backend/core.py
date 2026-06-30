@@ -320,7 +320,24 @@ async def get_cost_constants() -> Dict[str, Any]:
 # ------------------- PARSERS -------------------
 def parse_channelengine(content: bytes) -> List[dict]:
     text = content.decode("utf-8-sig", errors="replace")
-    reader = csv.DictReader(io.StringIO(text))
+    # Auto-detect delimiter — ChannelEngine exports come as both ',' (default)
+    # and ';' (Bol.com / EU locale exports). Sniff the first non-empty line.
+    sample = ""
+    for line in text.splitlines():
+        if line.strip():
+            sample = line
+            break
+    delimiter = ","
+    if sample:
+        try:
+            delimiter = csv.Sniffer().sniff(sample, delimiters=",;\t").delimiter
+        except csv.Error:
+            # Heuristic fallback: pick whichever character appears most outside quotes.
+            n_semi = sample.count(";")
+            n_comma = sample.count(",")
+            if n_semi > n_comma:
+                delimiter = ";"
+    reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
     rows = []
     for r in reader:
         if not r:

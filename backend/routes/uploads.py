@@ -28,7 +28,13 @@ async def upload_orders(file: UploadFile = File(...), source: str = Form("auto")
         try:
             if filename.lower().endswith(".csv"):
                 text = content.decode("utf-8-sig", errors="replace")
-                headers = next(csv.reader(io.StringIO(text)))
+                # Detect delimiter on the first line — ChannelEngine exports may use ; for EU files.
+                first_line = next((ln for ln in text.splitlines() if ln.strip()), "")
+                try:
+                    delim = csv.Sniffer().sniff(first_line, delimiters=",;\t").delimiter
+                except csv.Error:
+                    delim = ";" if first_line.count(";") > first_line.count(",") else ","
+                headers = next(csv.reader(io.StringIO(text), delimiter=delim))
             else:
                 try:
                     df_head = pd.read_excel(io.BytesIO(content), nrows=0)
