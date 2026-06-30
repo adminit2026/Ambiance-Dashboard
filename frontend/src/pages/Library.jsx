@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import PageHeader from "@/components/PageHeader";
 import api, { API_BASE } from "@/lib/api";
-import { fmtEur, fmtNum } from "@/lib/format";
+import { fmtEur, fmtEurExact, fmtNum } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import { Search, Download } from "lucide-react";
 
@@ -115,11 +115,11 @@ export default function Library() {
                 <tr key={r.sku} data-testid={`library-row-${r.sku}`}>
                   <td className="font-mono-num font-medium">{r.sku}</td>
                   <td className="max-w-[400px] truncate text-[#5E636E]" title={r.product_name}>{r.product_name || "—"}</td>
-                  <td className="text-right font-mono-num">{r.has_cost ? fmtEur(r.production_cost) : <span className="text-[#D5D7DC]">—</span>}</td>
-                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEur(r.operational_cost)}</td>
-                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEur(r.production_shipping_cost)}</td>
+                  <td className="text-right font-mono-num">{r.has_cost ? fmtEurExact(r.production_cost) : <span className="text-[#D5D7DC]">—</span>}</td>
+                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEurExact(r.operational_cost)}</td>
+                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEurExact(r.production_shipping_cost)}</td>
                   <td className="text-right font-mono-num text-[#5E636E]">{r.commission_pct ? `${r.commission_pct.toFixed(1)}%` : <span className="text-[#D5D7DC]">—</span>}</td>
-                  <td className="text-right font-mono-num font-semibold">{r.has_cost ? fmtEur(r.total_cost) : <span className="text-[#D5D7DC]">—</span>}</td>
+                  <td className="text-right font-mono-num font-semibold">{r.has_cost ? fmtEurExact(r.total_cost) : <span className="text-[#D5D7DC]">—</span>}</td>
                   <td className="text-right font-mono-num text-[#5E636E]">{fmtNum(r.units_sold)}</td>
                 </tr>
               ))}

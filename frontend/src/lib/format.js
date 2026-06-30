@@ -1,5 +1,9 @@
 export const fmtEur = (v) =>
-  new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(Number(v || 0));
+  new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(Math.round(Number(v || 0)));
+
+// Use for unit-level prices / per-unit costs where cents matter (e.g. €4.95 sticker price).
+export const fmtEurExact = (v) =>
+  new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(v || 0));
 
 export const fmtNum = (v) =>
   new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Number(v || 0));

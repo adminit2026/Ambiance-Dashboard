@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import PageHeader from "@/components/PageHeader";
 import FiltersBar, { useFilters } from "@/components/FiltersBar";
 import api from "@/lib/api";
-import { fmtEur, fmtNum, fmtPct, colorFor } from "@/lib/format";
+import { fmtEur, fmtEurExact, fmtNum, fmtPct, colorFor } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import { Undo2, XOctagon } from "lucide-react";
 
@@ -150,7 +150,7 @@ export default function Returns() {
                     <td className="font-mono-num">{o.sku}</td>
                     <td>{o.status}</td>
                     <td className="text-right font-mono-num">{fmtNum(o.quantity)}</td>
-                    <td className="text-right font-mono-num">{fmtEur(o.line_total_eur || 0)}</td>
+                    <td className="text-right font-mono-num">{fmtEurExact(o.line_total_eur || 0)}</td>
                   </tr>
                 ))}
               </tbody>

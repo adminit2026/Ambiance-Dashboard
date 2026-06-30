@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import PageHeader from "@/components/PageHeader";
 import FiltersBar, { useFilters } from "@/components/FiltersBar";
 import api, { API_BASE } from "@/lib/api";
-import { fmtEur, fmtNum, fmtDate } from "@/lib/format";
+import { fmtEur, fmtEurExact, fmtNum, fmtDate } from "@/lib/format";
 import { Download } from "lucide-react";
 
 export default function Orders() {
@@ -87,7 +87,7 @@ export default function Orders() {
                   <td className="text-right font-mono-num">{o.quantity}</td>
                   <td className="text-right font-mono-num">{Number(o.unit_price || 0).toFixed(2)} {o.currency}</td>
                   <td className="text-right font-mono-num">{Number(o.line_total || 0).toFixed(2)} {o.currency}</td>
-                  <td className="text-right font-mono-num">{fmtEur(o.line_total_eur)}</td>
+                  <td className="text-right font-mono-num">{fmtEurExact(o.line_total_eur)}</td>
                   <td>{o.country || "—"}</td>
                   <td><span className="pill">{o.status || "—"}</span></td>
                 </tr>

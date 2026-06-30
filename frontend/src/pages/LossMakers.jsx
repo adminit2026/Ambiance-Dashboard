@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import PageHeader from "@/components/PageHeader";
 import FiltersBar, { useFilters } from "@/components/FiltersBar";
 import api from "@/lib/api";
-import { fmtEur, fmtNum, colorFor } from "@/lib/format";
+import { fmtEur, fmtEurExact, fmtNum, colorFor } from "@/lib/format";
 import { AlertTriangle } from "lucide-react";
 
 export default function LossMakers() {
@@ -72,13 +72,13 @@ export default function LossMakers() {
                   </td>
                   <td className="max-w-[260px] truncate text-[#5E636E]" title={r.product_name}>{r.product_name || "—"}</td>
                   <td className="text-right font-mono-num">{fmtNum(r.units)}</td>
-                  <td className="text-right font-mono-num">{fmtEur(r.avg_unit_price)}</td>
-                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEur(r.production_cost)}</td>
-                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEur(r.operational_cost)}</td>
-                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEur(r.production_shipping)}</td>
-                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEur(r.commission_per_unit)}</td>
-                  <td className="text-right font-mono-num font-semibold">{fmtEur(r.total_cost_per_unit)}</td>
-                  <td className="text-right font-mono-num text-[#FF2A2A] font-semibold">{fmtEur(r.net_per_unit)}</td>
+                  <td className="text-right font-mono-num">{fmtEurExact(r.avg_unit_price)}</td>
+                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEurExact(r.production_cost)}</td>
+                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEurExact(r.operational_cost)}</td>
+                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEurExact(r.production_shipping)}</td>
+                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEurExact(r.commission_per_unit)}</td>
+                  <td className="text-right font-mono-num font-semibold">{fmtEurExact(r.total_cost_per_unit)}</td>
+                  <td className="text-right font-mono-num text-[#FF2A2A] font-semibold">{fmtEurExact(r.net_per_unit)}</td>
                   <td className="text-right font-mono-num text-[#FF2A2A] font-bold">{fmtEur(r.total_loss_eur)}</td>
                 </tr>
               ))}

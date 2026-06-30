@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import PageHeader from "@/components/PageHeader";
 import FiltersBar, { useFilters } from "@/components/FiltersBar";
 import api, { API_BASE } from "@/lib/api";
-import { fmtEur, fmtNum, colorFor } from "@/lib/format";
+import { fmtEur, fmtEurExact, fmtNum, colorFor } from "@/lib/format";
 import { Download, Search } from "lucide-react";
 
 export default function Prices() {
@@ -103,10 +103,10 @@ export default function Prices() {
                     if (!p) return <td key={m} className="text-right text-[#D5D7DC]">—</td>;
                     return (
                       <td key={m} className="text-right font-mono-num">
-                        <div>{fmtEur(p.avg)}</div>
+                        <div>{fmtEurExact(p.avg)}</div>
                         {p.min !== p.max && (
                           <div className="text-[10px] text-[#5E636E]">
-                            {fmtEur(p.min)} – {fmtEur(p.max)}
+                            {fmtEurExact(p.min)} – {fmtEurExact(p.max)}
                           </div>
                         )}
                         <div className="text-[10px] text-[#5E636E]">{fmtNum(p.units)} units</div>
