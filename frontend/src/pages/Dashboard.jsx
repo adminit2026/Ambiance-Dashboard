@@ -17,8 +17,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     api.get("/dashboard/summary", { params }).then((r) => setSummary(r.data));
-    api.get("/dashboard/trend", { params: { ...params, granularity: "day" } }).then((r) => setTrend(r.data));
-    api.get("/dashboard/marketplace-breakdown", { params }).then((r) => setBreakdown(r.data));
+    api.get("/dashboard/trend", { params: { ...params, granularity: "day", rollup: true } }).then((r) => setTrend(r.data));
+    api.get("/dashboard/marketplace-breakdown", { params: { ...params, rollup: true } }).then((r) => setBreakdown(r.data));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(filters)]);
 

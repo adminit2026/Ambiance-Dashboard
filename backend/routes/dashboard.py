@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from core import (
     db, get_current_user, build_match, parse_list,
     get_rates, get_cost_constants, to_eur,
+    rollup_marketplace,
 )
 
 router = APIRouter()
@@ -184,6 +185,7 @@ async def dashboard_trend(
     marketplaces: Optional[str] = None,
     sku: Optional[str] = None,
     granularity: str = Query("day", pattern="^(day|month)$"),
+    rollup: bool = False,
     user=Depends(get_current_user),
 ):
     match = build_match(date_from, date_to, parse_list(marketplaces), sku)
@@ -205,15 +207,18 @@ async def dashboard_trend(
     for r in rows:
         period = r["_id"]["period"]
         mk = r["_id"]["marketplace"]
+        if rollup:
+            mk = rollup_marketplace(mk)
         if period not in out:
             out[period] = {"period": period, "revenue_total": 0, "by_marketplace": {}, "orders_total": 0, "units_total": 0}
-        out[period]["by_marketplace"][mk] = round(float(r["revenue"] or 0), 2)
+        out[period]["by_marketplace"][mk] = out[period]["by_marketplace"].get(mk, 0) + round(float(r["revenue"] or 0), 2)
         out[period]["revenue_total"] += float(r["revenue"] or 0)
         out[period]["orders_total"] += len(r["orders"])
         out[period]["units_total"] += int(r["units"] or 0)
     series = sorted(out.values(), key=lambda x: x["period"])
     for s in series:
         s["revenue_total"] = round(s["revenue_total"], 2)
+        s["by_marketplace"] = {k: round(v, 2) for k, v in s["by_marketplace"].items()}
     return series
 
 
@@ -223,6 +228,7 @@ async def marketplace_breakdown(
     date_to: Optional[str] = None,
     marketplaces: Optional[str] = None,
     sku: Optional[str] = None,
+    rollup: bool = False,
     user=Depends(get_current_user),
 ):
     match = build_match(date_from, date_to, parse_list(marketplaces), sku)
@@ -238,14 +244,44 @@ async def marketplace_breakdown(
         {"$sort": {"revenue": -1}},
     ]
     rows = await db.orders.aggregate(pipeline).to_list(100)
-    return [{
-        "marketplace": r["_id"] or "Unknown",
-        "revenue_eur": round(float(r["revenue"] or 0), 2),
-        "shipping_eur": round(float(r["shipping"] or 0), 2),
-        "units": int(r["units"] or 0),
-        "orders": len(r["orders"]),
-        "aov_eur": round(float(r["revenue"] or 0) / len(r["orders"]), 2) if r["orders"] else 0,
-    } for r in rows]
+    if not rollup:
+        return [{
+            "marketplace": r["_id"] or "Unknown",
+            "revenue_eur": round(float(r["revenue"] or 0), 2),
+            "shipping_eur": round(float(r["shipping"] or 0), 2),
+            "units": int(r["units"] or 0),
+            "orders": len(r["orders"]),
+            "aov_eur": round(float(r["revenue"] or 0) / len(r["orders"]), 2) if r["orders"] else 0,
+        } for r in rows]
+
+    # Collapse split marketplaces (Maxeda BE+NL → Maxeda, Veepee BE/FR/NL → Veepee).
+    merged: Dict[str, dict] = {}
+    for r in rows:
+        parent = rollup_marketplace(r["_id"] or "Unknown")
+        m = merged.setdefault(parent, {
+            "marketplace": parent,
+            "revenue_eur": 0.0,
+            "shipping_eur": 0.0,
+            "units": 0,
+            "orders": set(),
+        })
+        m["revenue_eur"] += float(r["revenue"] or 0)
+        m["shipping_eur"] += float(r["shipping"] or 0)
+        m["units"] += int(r["units"] or 0)
+        m["orders"].update(r["orders"])
+    out = []
+    for m in merged.values():
+        orders_count = len(m["orders"])
+        out.append({
+            "marketplace": m["marketplace"],
+            "revenue_eur": round(m["revenue_eur"], 2),
+            "shipping_eur": round(m["shipping_eur"], 2),
+            "units": m["units"],
+            "orders": orders_count,
+            "aov_eur": round(m["revenue_eur"] / orders_count, 2) if orders_count else 0,
+        })
+    out.sort(key=lambda x: x["revenue_eur"], reverse=True)
+    return out
 
 
 @router.get("/dashboard/marketplace-country-breakdown")

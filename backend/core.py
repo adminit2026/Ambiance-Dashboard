@@ -214,6 +214,21 @@ CANONICAL_MARKETPLACES = [
 ]
 
 
+# Rollup used only by the Aggregate Dashboard (donut + trend legend).
+# The Marketplaces page keeps the raw canonical labels above.
+AGGREGATE_ROLLUP = {
+    "Maxeda - BE": "Maxeda",
+    "Maxeda - NL": "Maxeda",
+    "PinkConnect Veepee - BE": "Veepee",
+    "PinkConnect Veepee - FR": "Veepee",
+    "PinkConnect Veepee - NL": "Veepee",
+}
+
+
+def rollup_marketplace(mk: str) -> str:
+    return AGGREGATE_ROLLUP.get(mk, mk)
+
+
 def channel_to_marketplace(channel_name: str) -> str:
     if not channel_name:
         return "Unknown"
@@ -224,7 +239,17 @@ def channel_to_marketplace(channel_name: str) -> str:
         "carte bancaire",
         "kredietkaart",
         "credit card",
+        "carta di credito",
+        "kredit- und debitkarten",
+        "kredit und debitkarten",
+        "kredit-und debitkarten",
+        "virement bancaire",
+        "virement",
         "tarjeta de credito",
+        "tarjeta de crédito",
+        "tarjeta de cr&eacute;dito",
+        "carte bancaire (visa, mastercard, cb)",
+        "paypal",
         "ambiance web",
         "ambiance-sticker",
         "ambiancesticker",
