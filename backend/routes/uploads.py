@@ -12,7 +12,7 @@ import pandas as pd
 from core import (
     db, logger, get_current_user, require_admin,
     detect_source, parse_channelengine, parse_beezup, parse_amazon_po,
-    parse_amazon_edit_line_items,
+    parse_amazon_edit_line_items, parse_ambiance_web,
     apply_asin_mapping, parse_asin_mapping, parse_cost_file,
     get_rates, to_eur, remap_amazon_orders,
 )
@@ -36,8 +36,11 @@ async def upload_orders(file: UploadFile = File(...), source: str = Form("auto")
                     delim = ";" if first_line.count(";") > first_line.count(",") else ","
                 headers = next(csv.reader(io.StringIO(text), delimiter=delim))
             else:
+                # Read sheet 0 headers; if the file has a 'Commandes' sheet (Ambiance Web) prefer that
                 try:
-                    df_head = pd.read_excel(io.BytesIO(content), nrows=0)
+                    xl = pd.ExcelFile(io.BytesIO(content))
+                    sheet = "Commandes" if "Commandes" in xl.sheet_names else xl.sheet_names[0]
+                    df_head = pd.read_excel(io.BytesIO(content), sheet_name=sheet, nrows=0)
                 except Exception:
                     df_head = pd.read_excel(io.BytesIO(content), nrows=0, engine="xlrd")
                 headers = list(df_head.columns)
@@ -45,8 +48,8 @@ async def upload_orders(file: UploadFile = File(...), source: str = Form("auto")
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Could not detect source: {e}")
 
-    if source not in ("channelengine", "beezup", "amazon_po", "amazon_edit"):
-        raise HTTPException(status_code=400, detail=f"Unknown source '{source}'. Specify channelengine, beezup, amazon_po, or amazon_edit.")
+    if source not in ("channelengine", "beezup", "amazon_po", "amazon_edit", "ambiance_web"):
+        raise HTTPException(status_code=400, detail=f"Unknown source '{source}'. Specify channelengine, beezup, amazon_po, amazon_edit, or ambiance_web.")
 
     try:
         if source == "channelengine":
@@ -56,6 +59,8 @@ async def upload_orders(file: UploadFile = File(...), source: str = Form("auto")
         elif source == "amazon_edit":
             rows = parse_amazon_edit_line_items(content)
             rows = await apply_asin_mapping(rows)
+        elif source == "ambiance_web":
+            rows = parse_ambiance_web(content)
         else:
             rows = parse_amazon_po(content)
             rows = await apply_asin_mapping(rows)

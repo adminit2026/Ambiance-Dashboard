@@ -268,6 +268,9 @@ def detect_source(filename: str, headers: List[str]) -> str:
     fn = (filename or "").lower()
     cols = [c.lower() for c in headers]
     cols_set = set(cols)
+    # Ambiance Web (Prestashop export) — French headers
+    if "numéro commande" in cols_set and ("produit : référence" in cols_set or "produit : ean" in cols_set):
+        return "ambiance_web"
     # Amazon "Edit Line Items" export — richer than basic PO export (carries delivery window dates)
     if "window end" in cols_set and "expected date" in cols_set and "po" in cols_set:
         return "amazon_edit"
@@ -283,6 +286,8 @@ def detect_source(filename: str, headers: List[str]) -> str:
         return "beezup"
     if "editlineitems" in fn:
         return "amazon_edit"
+    if "ambiance" in fn and "web" in fn:
+        return "ambiance_web"
     if "poitem" in fn or "amazon" in fn:
         return "amazon_po"
     return "unknown"
@@ -544,6 +549,83 @@ def parse_amazon_edit_line_items(content: bytes) -> List[dict]:
             "status": status,
             "country": warehouse,
             "city": warehouse,
+            "customer_email": "",
+        })
+    return rows
+
+
+def parse_ambiance_web(content: bytes) -> List[dict]:
+    """Ambiance Sticker website (Prestashop) 'Commandes' export.
+
+    Sheet: 'Commandes'. Each row = one product line inside an order.
+    Columns (verbatim French):
+      Numéro commande, Date (DD/MM/YYYY), Statut, Méthode de paiement,
+      Nombre d'articles, Produit : référence (= SKU), Produit : options,
+      Produit : quantité, Produit : total prix TTC, Produit : prix unitaire TTC,
+      Produit : ean, Product : Reference stock
+
+    All rows are hard-mapped to marketplace = 'Ambiance Web'.
+    line_key = f"{order_id}::{sku}::{options_hash}::{line_idx}" — deterministic across re-uploads,
+    unique even when the same (order,sku,options) triplet appears more than once in a single order.
+    """
+    import hashlib
+
+    def s(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        return str(v).strip()
+
+    try:
+        df = pd.read_excel(io.BytesIO(content), sheet_name="Commandes", dtype=str)
+    except Exception:
+        df = pd.read_excel(io.BytesIO(content), sheet_name=0, dtype=str)
+    df = df.fillna("")
+
+    rows: List[dict] = []
+    line_counter: Dict[tuple, int] = {}
+    for _, r in df.iterrows():
+        order_id = s(r.get("Numéro commande"))
+        sku = s(r.get("Produit : référence"))
+        if not order_id or not sku:
+            continue
+        options = s(r.get("Produit : options"))
+        options_hash = hashlib.md5(options.encode("utf-8")).hexdigest()[:8] if options else "no_opts"
+        combo = (order_id, sku, options_hash)
+        line_counter[combo] = line_counter.get(combo, 0) + 1
+        line_idx = line_counter[combo]
+
+        qty = int(parse_number(r.get("Produit : quantité") or 1))
+        line_total = parse_number(r.get("Produit : total prix TTC"))
+        unit_price = parse_number(r.get("Produit : prix unitaire TTC"))
+        if unit_price == 0 and qty > 0 and line_total > 0:
+            unit_price = line_total / qty
+
+        date_raw = s(r.get("Date"))
+        order_date = parse_date(date_raw)
+        # Prestashop French export uses DD/MM/YYYY — parse_date already tries this format.
+
+        status = s(r.get("Statut"))
+        payment = s(r.get("Méthode de paiement"))
+        product_name = options or s(r.get("Product : Reference stock"))
+
+        rows.append({
+            "source": "ambiance_web",
+            "marketplace": "Ambiance Web",
+            "channel_raw": payment or "Ambiance Web",
+            "order_id": order_id,
+            "line_key": f"{order_id}::{sku}::{options_hash}::{line_idx}",
+            "sku": sku,
+            "product_name": product_name,
+            "quantity": qty,
+            "unit_price": unit_price,
+            "line_total": line_total,
+            "shipping_cost": 0.0,
+            "vat": 0.0,  # TTC prices — VAT is included but not itemised in this export
+            "currency": "EUR",
+            "order_date": order_date,
+            "status": status,
+            "country": "",
+            "city": "",
             "customer_email": "",
         })
     return rows

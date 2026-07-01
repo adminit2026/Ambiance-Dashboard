@@ -102,14 +102,14 @@ async def dashboard_returns(
     base_match = build_match(date_from, date_to, parse_list(marketplaces), sku)
     match = {
         **base_match,
-        "status": {"$regex": "refund|return|cancel", "$options": "i"},
+        "status": {"$regex": "refund|return|cancel|annul|rembours", "$options": "i"},
     }
     pipeline = [
         {"$match": match},
         {"$addFields": {
             "bucket": {
                 "$cond": [
-                    {"$regexMatch": {"input": {"$ifNull": ["$status", ""]}, "regex": "cancel", "options": "i"}},
+                    {"$regexMatch": {"input": {"$ifNull": ["$status", ""]}, "regex": "cancel|annul", "options": "i"}},
                     "cancel",
                     "refund",
                 ]
