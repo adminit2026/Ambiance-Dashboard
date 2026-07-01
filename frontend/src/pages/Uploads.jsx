@@ -128,10 +128,12 @@ export default function Uploads() {
           accept=".csv,.xls,.xlsx"
           testId="dropzone-orders"
           sourceOptions={[
-            { value: "auto", label: "Auto-detect" },
-            { value: "channelengine", label: "ChannelEngine (CSV)" },
+            { value: "auto", label: "Auto-detect (recommended)" },
+            { value: "ambiance_web", label: "Ambiance Web (Prestashop XLSX)" },
+            { value: "channelengine", label: "ChannelEngine (CSV, ; or , delimited)" },
             { value: "beezup", label: "BeezUP (XLSX)" },
             { value: "amazon_po", label: "Amazon Vendor PO (XLS/XLSX)" },
+            { value: "amazon_edit", label: "Amazon Vendor — Edit Line Items (XLSX)" },
           ]}
           onDone={reload}
         />
