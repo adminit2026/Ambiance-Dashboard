@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import PageHeader from "@/components/PageHeader";
 import api, { formatApiError } from "@/lib/api";
 import { toast } from "sonner";
-import { UploadCloud, CheckCircle2, FileText, Loader2 } from "lucide-react";
+import { UploadCloud, CheckCircle2, FileText, Loader2, Trash2 } from "lucide-react";
 import { fmtDate, fmtNum } from "@/lib/format";
 
 function Dropzone({ label, hint, endpoint, accept, testId, sourceOptions, onDone }) {
@@ -88,6 +88,18 @@ export default function Uploads() {
 
   const reload = () => api.get("/uploads/history").then((r) => setHistory(r.data));
   useEffect(() => { reload(); }, []);
+
+  const deleteUpload = async (u) => {
+    const msg = `Reverse this upload?\n\nFile: ${u.filename}\nInserted: ${u.inserted} rows\n\nAll rows this upload originally created will be permanently deleted. Rows it only updated will remain (previous values cannot be restored).`;
+    if (!window.confirm(msg)) return;
+    try {
+      const { data } = await api.delete(`/uploads/${u.id}`);
+      toast.success(`Reversed · ${data.removed} rows removed`);
+      reload();
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Delete failed");
+    }
+  };
 
   const downloadTemplate = async () => {
     const token = localStorage.getItem("ambiance_token");
@@ -225,17 +237,31 @@ export default function Uploads() {
           ) : (
             <table className="dense w-full" data-testid="upload-history">
               <thead>
-                <tr><th>When</th><th>File</th><th>Source</th><th className="text-right">Rows</th><th className="text-right">New</th><th className="text-right">Updated</th></tr>
+                <tr><th>When</th><th>File</th><th>Source</th><th className="text-right">Rows</th><th className="text-right">New</th><th className="text-right">Updated</th><th className="text-right w-16">Undo</th></tr>
               </thead>
               <tbody>
                 {history.map((h, i) => (
-                  <tr key={i}>
+                  <tr key={h.id || i} data-testid={`upload-row-${h.id || i}`}>
                     <td className="font-mono-num text-[#5E636E]">{fmtDate(h.uploaded_at)}</td>
                     <td className="truncate max-w-[320px]" title={h.filename}>{h.filename}</td>
                     <td><span className="pill">{h.source}</span></td>
                     <td className="text-right font-mono-num">{fmtNum(h.rows_total)}</td>
                     <td className="text-right font-mono-num text-[#00A859]">+{fmtNum(h.inserted)}</td>
                     <td className="text-right font-mono-num text-[#5E636E]">{fmtNum(h.updated)}</td>
+                    <td className="text-right">
+                      {h.id ? (
+                        <button
+                          onClick={() => deleteUpload(h)}
+                          className="p-1.5 rounded hover:bg-[#FEECEC] transition-colors text-[#FF2A2A]"
+                          title={`Delete this upload and remove its ${h.inserted} inserted rows`}
+                          data-testid={`upload-delete-${h.id}`}
+                        >
+                          <Trash2 size={14} strokeWidth={1.75} />
+                        </button>
+                      ) : (
+                        <span className="text-xs text-[#D5D7DC]">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

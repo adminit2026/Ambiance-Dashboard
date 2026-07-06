@@ -14,6 +14,7 @@ export default function Dashboard() {
   const [summary, setSummary] = useState(null);
   const [trend, setTrend] = useState([]);
   const [breakdown, setBreakdown] = useState([]);
+  const [showTotal, setShowTotal] = useState(false);
 
   useEffect(() => {
     api.get("/dashboard/summary", { params }).then((r) => setSummary(r.data));
@@ -31,19 +32,29 @@ export default function Dashboard() {
       <FiltersBar filters={filters} setFilters={setFilters} />
 
       <section className="px-8 py-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-0 grid-borders">
-        <KpiCard testId="kpi-revenue" label="Net Revenue" value={fmtEur(summary?.revenue_eur)} sub={`${fmtNum(summary?.orders)} orders`} accent="#0055FF" />
+        <KpiCard testId="kpi-revenue" label="Turnover" value={fmtEur(summary?.revenue_eur)} sub={`${fmtNum(summary?.orders)} orders · gross sales before deductions`} accent="#0055FF" />
         <KpiCard testId="kpi-units" label="Units Sold" value={fmtNum(summary?.units)} sub={`${fmtNum(summary?.lines)} order lines`} accent="#111215" />
         <KpiCard testId="kpi-aov" label="Avg Order Value" value={fmtEur(summary?.aov_eur)} sub={`Shipping ${fmtEur(summary?.shipping_eur)}`} accent="#FF9900" />
-        <KpiCard testId="kpi-margin" label="Net Margin" value={fmtPct(summary?.margin_pct)} sub={summary && summary.cogs_eur > 0 ? `${fmtEur(summary?.margin_eur)} after COGS` : "Upload cost file to compute"} accent="#00A859" />
+        <KpiCard testId="kpi-margin" label="Net Margin" value={fmtPct(summary?.margin_pct)} sub={summary && summary.cogs_eur > 0 ? `${fmtEur(summary?.margin_eur)} after all costs` : "Upload cost file to compute"} accent="#00A859" />
       </section>
 
       <section className="px-8 grid grid-cols-1 lg:grid-cols-3 gap-0 grid-borders" data-testid="trend-section">
         <div className="lg:col-span-2 p-6">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
             <div>
               <div className="eyebrow">Sales trend</div>
-              <h3 className="font-display text-xl font-semibold mt-1">Revenue by day · all marketplaces</h3>
+              <h3 className="font-display text-xl font-semibold mt-1">Turnover by day · per marketplace</h3>
             </div>
+            <label className="flex items-center gap-2 text-sm text-[#5E636E] cursor-pointer select-none" data-testid="toggle-total">
+              <input
+                type="checkbox"
+                checked={showTotal}
+                onChange={(e) => setShowTotal(e.target.checked)}
+                className="accent-[#0055FF]"
+                data-testid="toggle-total-checkbox"
+              />
+              Show total line
+            </label>
           </div>
           {trend.length === 0 ? (
             <EmptyState text="No sales in this range. Try Uploads to import orders." />
@@ -55,7 +66,9 @@ export default function Dashboard() {
                 <YAxis tick={{ fontSize: 11, fill: "#5E636E" }} stroke="#E5E7EB" tickFormatter={(v) => `€${v}`} />
                 <Tooltip formatter={(v) => fmtEur(v)} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Line type="monotone" dataKey="total" name="Total" stroke="#111215" strokeWidth={2} dot={false} />
+                {showTotal && (
+                  <Line type="monotone" dataKey="total" name="Total" stroke="#111215" strokeWidth={2} dot={false} />
+                )}
                 {allMks.map((mk) => (
                   <Line key={mk} type="monotone" dataKey={mk} stroke={colorFor(mk)} strokeWidth={1.25} dot={false} />
                 ))}
@@ -66,7 +79,7 @@ export default function Dashboard() {
 
         <div className="p-6">
           <div className="eyebrow">Mix</div>
-          <h3 className="font-display text-xl font-semibold mt-1 mb-4">Revenue by marketplace</h3>
+          <h3 className="font-display text-xl font-semibold mt-1 mb-4">Turnover by marketplace</h3>
           {breakdown.length === 0 ? (
             <EmptyState text="No data" />
           ) : (

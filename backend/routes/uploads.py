@@ -3,7 +3,7 @@ import io
 import csv
 import re
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -70,6 +70,7 @@ async def upload_orders(file: UploadFile = File(...), source: str = Form("auto")
 
     rates = await get_rates()
     inserted, updated = 0, 0
+    inserted_keys: List[str] = []
     for r in rows:
         r["order_date_iso"] = r["order_date"].isoformat() if r["order_date"] else None
         # Amazon edit line items: persist delivery / window-start iso strings too
@@ -86,6 +87,7 @@ async def upload_orders(file: UploadFile = File(...), source: str = Form("auto")
         )
         if res.upserted_id:
             inserted += 1
+            inserted_keys.append(r["line_key"])
         elif res.modified_count:
             updated += 1
 
@@ -97,6 +99,8 @@ async def upload_orders(file: UploadFile = File(...), source: str = Form("auto")
         "updated": updated,
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "by": user["email"],
+        "inserted_keys": inserted_keys,  # Used by DELETE /uploads/{id} to reverse this upload
+        "target_collection": "orders",
     })
     return {"source": source, "rows_total": len(rows), "inserted": inserted, "updated": updated}
 
@@ -108,11 +112,13 @@ async def upload_costs(file: UploadFile = File(...), user=Depends(require_admin)
     if not rows:
         raise HTTPException(status_code=400, detail="No valid cost rows found. Ensure 'sku' and 'cost_per_unit' columns exist.")
     inserted, updated = 0, 0
+    inserted_keys: List[str] = []
     for r in rows:
         r["updated_at"] = datetime.now(timezone.utc).isoformat()
         res = await db.costs.update_one({"sku": r["sku"]}, {"$set": r}, upsert=True)
         if res.upserted_id:
             inserted += 1
+            inserted_keys.append(r["sku"])
         else:
             updated += 1
     await db.uploads.insert_one({
@@ -123,14 +129,50 @@ async def upload_costs(file: UploadFile = File(...), user=Depends(require_admin)
         "updated": updated,
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "by": user["email"],
+        "inserted_keys": inserted_keys,
+        "target_collection": "costs",
     })
     return {"rows_total": len(rows), "inserted": inserted, "updated": updated}
 
 
 @router.get("/uploads/history")
 async def uploads_history(user=Depends(get_current_user)):
-    docs = await db.uploads.find({}, {"_id": 0}).sort("uploaded_at", -1).to_list(100)
+    docs = await db.uploads.find({}).sort("uploaded_at", -1).to_list(100)
+    # Convert _id to string id, drop the heavy inserted_keys list from the payload
+    for d in docs:
+        d["id"] = str(d.pop("_id"))
+        d.pop("inserted_keys", None)
     return docs
+
+
+@router.delete("/uploads/{upload_id}")
+async def delete_upload(upload_id: str, user=Depends(require_admin)):
+    """Reverse a prior upload: delete every row this upload originally inserted.
+    Rows that this upload only *updated* are left alone (we can't restore prior values).
+    Then delete the upload history entry itself.
+    """
+    from bson import ObjectId
+    try:
+        oid = ObjectId(upload_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid upload id")
+    doc = await db.uploads.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    keys = doc.get("inserted_keys") or []
+    target = doc.get("target_collection")
+    removed = 0
+    if keys and target == "orders":
+        r = await db.orders.delete_many({"line_key": {"$in": keys}})
+        removed = r.deleted_count
+    elif keys and target == "costs":
+        r = await db.costs.delete_many({"sku": {"$in": keys}})
+        removed = r.deleted_count
+    elif keys and target == "sku_mappings":
+        r = await db.sku_mappings.delete_many({"_id": {"$in": [ObjectId(k) for k in keys if len(k) == 24]}})
+        removed = r.deleted_count
+    await db.uploads.delete_one({"_id": oid})
+    return {"upload_id": upload_id, "removed": removed, "filename": doc.get("filename"), "source": doc.get("source")}
 
 
 @router.post("/uploads/asin-mapping")
@@ -140,6 +182,7 @@ async def upload_asin_mapping(file: UploadFile = File(...), user=Depends(require
     if not rows:
         raise HTTPException(status_code=400, detail="No valid rows. File must have 'asin' + 'merchant_sku' OR (SKU + Leroy Merlin ID + Amazon ASIN) columns.")
     inserted = updated = 0
+    inserted_keys: List[str] = []
     asin_legacy_count = 0
     for r in rows:
         r["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -150,6 +193,7 @@ async def upload_asin_mapping(file: UploadFile = File(...), user=Depends(require
         )
         if res.upserted_id:
             inserted += 1
+            inserted_keys.append(str(res.upserted_id))
         else:
             updated += 1
         if r["marketplace"] == "Amazon Vendor":
@@ -163,6 +207,7 @@ async def upload_asin_mapping(file: UploadFile = File(...), user=Depends(require
         "filename": file.filename, "source": "sku_mapping",
         "rows_total": len(rows), "inserted": inserted, "updated": updated,
         "uploaded_at": datetime.now(timezone.utc).isoformat(), "by": user["email"],
+        "inserted_keys": inserted_keys, "target_collection": "sku_mappings",
     })
     remapped = await remap_amazon_orders()
     return {"rows_total": len(rows), "inserted": inserted, "updated": updated, "orders_remapped": remapped}
