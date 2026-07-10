@@ -8,7 +8,7 @@ from pymongo import UpdateOne
 from core import (
     db, CostManualIn, CostConstantsUpdate, ExchangeRateUpdate,
     get_current_user, require_admin,
-    get_rates, get_cost_constants, to_eur, channel_to_marketplace,
+    get_rates, get_cost_constants, to_eur, channel_to_marketplace, refine_marketplace,
     remap_amazon_orders,
 )
 
@@ -90,8 +90,9 @@ async def reprocess_amazon_asins(user=Depends(require_admin)):
 async def renormalize_marketplaces(user=Depends(require_admin)):
     bulk = []
     changed = 0
-    async for o in db.orders.find({}, {"_id": 1, "channel_raw": 1, "marketplace": 1}):
-        new_mk = channel_to_marketplace(o.get("channel_raw") or o.get("marketplace") or "")
+    async for o in db.orders.find({}, {"_id": 1, "channel_raw": 1, "marketplace": 1, "country": 1}):
+        base_mk = channel_to_marketplace(o.get("channel_raw") or o.get("marketplace") or "")
+        new_mk = refine_marketplace(base_mk, o.get("country") or "")
         if new_mk != o.get("marketplace"):
             bulk.append(UpdateOne({"_id": o["_id"]}, {"$set": {"marketplace": new_mk}}))
             changed += 1

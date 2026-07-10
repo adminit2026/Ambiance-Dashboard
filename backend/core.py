@@ -203,7 +203,11 @@ CANONICAL_MARKETPLACES = [
     "CDiscount",
     "Castorama",
     "Kaufland",
-    "Leroy Merlin",
+    "Leroy Merlin - ES",
+    "Leroy Merlin - FR",
+    "Leroy Merlin - IT",
+    "Leroy Merlin - PL",
+    "Leroy Merlin - PT",
     "Maison",
     "Mano Mano",
     "Maxeda - BE",
@@ -222,11 +226,35 @@ AGGREGATE_ROLLUP = {
     "PinkConnect Veepee - BE": "Veepee",
     "PinkConnect Veepee - FR": "Veepee",
     "PinkConnect Veepee - NL": "Veepee",
+    "Leroy Merlin - FR": "Leroy Merlin",
+    "Leroy Merlin - ES": "Leroy Merlin",
+    "Leroy Merlin - IT": "Leroy Merlin",
+    "Leroy Merlin - PT": "Leroy Merlin",
+    "Leroy Merlin - PL": "Leroy Merlin",
 }
 
 
 def rollup_marketplace(mk: str) -> str:
     return AGGREGATE_ROLLUP.get(mk, mk)
+
+
+# Marketplaces that we split further by shipping-destination country. Extendable.
+LEROY_MERLIN_COUNTRIES = {"FR", "ES", "IT", "PT", "PL"}
+
+
+def refine_marketplace(mk: str, country: str) -> str:
+    """Split country-billed marketplaces so per-country shipping/commission rates apply.
+
+    Currently: Leroy Merlin ships FR/ES/IT/PT/PL orders at different production shipping
+    costs, so we tag each order with the destination-country marketplace label.
+    """
+    if not mk:
+        return mk
+    if mk == "Leroy Merlin" and country:
+        c = country.strip().upper()
+        if c in LEROY_MERLIN_COUNTRIES:
+            return f"Leroy Merlin - {c}"
+    return mk
 
 
 def channel_to_marketplace(channel_name: str) -> str:
@@ -430,7 +458,7 @@ def parse_beezup(content: bytes) -> List[dict]:
         product_name = (r.get("OrderItem_Title") or "").strip()
         rows.append({
             "source": "beezup",
-            "marketplace": marketplace,
+            "marketplace": refine_marketplace(marketplace, country),
             "channel_raw": r.get("MarketPlace", ""),
             "order_id": order_id,
             "line_key": f"{order_id}::{sku}",
