@@ -60,7 +60,7 @@ async def upload_orders(file: UploadFile = File(...), source: str = Form("auto")
             rows = parse_amazon_edit_line_items(content)
             rows = await apply_asin_mapping(rows)
         elif source == "ambiance_web":
-            rows = parse_ambiance_web(content)
+            rows = parse_ambiance_web(content, filename)
         else:
             rows = parse_amazon_po(content)
             rows = await apply_asin_mapping(rows)

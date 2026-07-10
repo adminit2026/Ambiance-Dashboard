@@ -607,19 +607,28 @@ def parse_amazon_edit_line_items(content: bytes) -> List[dict]:
     return rows
 
 
-def parse_ambiance_web(content: bytes) -> List[dict]:
+def parse_ambiance_web(content: bytes, filename: str = "") -> List[dict]:
     """Ambiance Sticker website (Prestashop) 'Commandes' export.
 
-    Sheet: 'Commandes'. Each row = one product line inside an order.
-    Columns (verbatim French):
+    Accepts BOTH the single-sheet XLSX export and the CSV/TSV export
+    (`export_commandes_*.csv`). Column names are identical (French Prestashop),
+    the CSV version may be tab-, semicolon- or comma-delimited.
+
+    Each row = one product line inside an order. Columns (verbatim French):
       Numéro commande, Date (DD/MM/YYYY), Statut, Méthode de paiement,
       Nombre d'articles, Produit : référence (= SKU), Produit : options,
       Produit : quantité, Produit : total prix TTC, Produit : prix unitaire TTC,
       Produit : ean, Product : Reference stock
 
-    All rows are hard-mapped to marketplace = 'Ambiance Web'.
-    line_key = f"{order_id}::{sku}::{options_hash}::{line_idx}" — deterministic across re-uploads,
-    unique even when the same (order,sku,options) triplet appears more than once in a single order.
+    The CSV variant of this file MIXES all marketplaces in one export (Ambiance
+    Web + Leroy Merlin + Castorama + …). We keep only rows whose payment method
+    is NOT a marketplace shorthand (LEROYMERLIN, CASTORAMA, CDISCOUNT,
+    PinkConnect-VEEPEE, MONECHELLE, MAXEDA, BOL, KAUFLAND, MAISON, MANO). Every
+    remaining row is booked as marketplace = 'Ambiance Web'.
+
+    line_key = f"{order_id}::{sku}::{options_hash}::{line_idx}" — deterministic
+    across re-uploads, unique even when the same (order,sku,options) triplet
+    appears more than once in a single order.
     """
     import hashlib
 
@@ -628,22 +637,91 @@ def parse_ambiance_web(content: bytes) -> List[dict]:
             return ""
         return str(v).strip()
 
-    try:
-        df = pd.read_excel(io.BytesIO(content), sheet_name="Commandes", dtype=str)
-    except Exception:
-        df = pd.read_excel(io.BytesIO(content), sheet_name=0, dtype=str)
+    fn = (filename or "").lower()
+    df = None
+    if fn.endswith((".csv", ".tsv", ".txt")):
+        # Detect encoding
+        text = None
+        for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+            try:
+                text = content.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            text = content.decode("utf-8", errors="replace")
+        # Detect delimiter — Prestashop CSV export defaults to TAB
+        first_line = next((ln for ln in text.splitlines() if ln.strip()), "")
+        try:
+            delim = csv.Sniffer().sniff(first_line, delimiters=",;\t").delimiter
+        except csv.Error:
+            counts = {d: first_line.count(d) for d in ",;\t"}
+            delim = max(counts, key=counts.get)
+        df = pd.read_csv(io.StringIO(text), delimiter=delim, dtype=str)
+    else:
+        try:
+            df = pd.read_excel(io.BytesIO(content), sheet_name="Commandes", dtype=str)
+        except Exception:
+            df = pd.read_excel(io.BytesIO(content), sheet_name=0, dtype=str)
     df = df.fillna("")
+
+    # Marketplace payment method tokens — these rows must NOT be booked as
+    # Ambiance Web because they belong to other marketplaces we already ingest
+    # via ChannelEngine / BeezUP / Amazon.
+    EXCLUDE_TOKENS = (
+        "leroymerlin", "castorama", "cdiscount",
+        "pinkconnect", "veepee", "monechelle",
+        "maxeda", "bol_", "bol.com", "kaufland",
+        "maison", "manomano", "mano_mano",
+    )
 
     rows: List[dict] = []
     line_counter: Dict[tuple, int] = {}
+    skipped_by_channel = 0
+
+    # This Prestashop export can come in two shapes:
+    #   (a) Fat rows — every row has order metadata + product line (XLSX export).
+    #   (b) Header + child rows — order metadata is on a stand-alone "header" row
+    #       and the product lines below have empty order fields (TSV export).
+    # Detect (b) by carrying forward the last seen order/date/status/payment
+    # whenever we hit a product-line row that lacks order_id.
+    current: Dict[str, str] = {"order_id": "", "date": "", "status": "", "payment": ""}
     for _, r in df.iterrows():
-        order_id = s(r.get("Numéro commande"))
+        row_order_id = s(r.get("Numéro commande"))
+        row_date = s(r.get("Date"))
+        row_status = s(r.get("Statut"))
+        row_payment = s(r.get("Méthode de paiement"))
         sku = s(r.get("Produit : référence"))
-        if not order_id or not sku:
+
+        # Header row: refresh the "current" order metadata
+        if row_order_id:
+            current = {
+                "order_id": row_order_id,
+                "date": row_date or current["date"],
+                "status": row_status or current["status"],
+                "payment": row_payment or current["payment"],
+            }
+            # Header-only rows have no SKU — nothing to book, continue
+            if not sku:
+                continue
+        else:
+            # Child product-line row → inherit from current header
+            row_order_id = current["order_id"]
+            row_date = current["date"]
+            row_status = current["status"]
+            row_payment = current["payment"]
+
+        if not row_order_id or not sku:
             continue
+
+        p_low = row_payment.lower()
+        if any(tok in p_low for tok in EXCLUDE_TOKENS):
+            skipped_by_channel += 1
+            continue
+
         options = s(r.get("Produit : options"))
         options_hash = hashlib.md5(options.encode("utf-8")).hexdigest()[:8] if options else "no_opts"
-        combo = (order_id, sku, options_hash)
+        combo = (row_order_id, sku, options_hash)
         line_counter[combo] = line_counter.get(combo, 0) + 1
         line_idx = line_counter[combo]
 
@@ -653,34 +731,32 @@ def parse_ambiance_web(content: bytes) -> List[dict]:
         if unit_price == 0 and qty > 0 and line_total > 0:
             unit_price = line_total / qty
 
-        date_raw = s(r.get("Date"))
-        order_date = parse_date(date_raw)
-        # Prestashop French export uses DD/MM/YYYY — parse_date already tries this format.
-
-        status = s(r.get("Statut"))
-        payment = s(r.get("Méthode de paiement"))
+        order_date = parse_date(row_date)
         product_name = options or s(r.get("Product : Reference stock"))
 
         rows.append({
             "source": "ambiance_web",
             "marketplace": "Ambiance Web",
-            "channel_raw": payment or "Ambiance Web",
-            "order_id": order_id,
-            "line_key": f"{order_id}::{sku}::{options_hash}::{line_idx}",
+            "channel_raw": row_payment or "Ambiance Web",
+            "order_id": row_order_id,
+            "line_key": f"{row_order_id}::{sku}::{options_hash}::{line_idx}",
             "sku": sku,
             "product_name": product_name,
             "quantity": qty,
             "unit_price": unit_price,
             "line_total": line_total,
             "shipping_cost": 0.0,
-            "vat": 0.0,  # TTC prices — VAT is included but not itemised in this export
+            "vat": 0.0,
             "currency": "EUR",
             "order_date": order_date,
-            "status": status,
+            "status": row_status,
             "country": "",
             "city": "",
             "customer_email": "",
         })
+
+    if skipped_by_channel:
+        logger.info("parse_ambiance_web: skipped %d rows belonging to other marketplaces", skipped_by_channel)
     return rows
 
 
