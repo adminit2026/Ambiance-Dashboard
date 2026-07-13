@@ -118,7 +118,7 @@ export default function Products() {
               <input
                 autoFocus
                 className="in w-full text-sm"
-                placeholder={t("products.filter_text")}
+                placeholder={col === "sku" ? (t("products.filter_starts_with") || "starts with…") : (t("products.filter_text") || "contains…")}
                 value={f || ""}
                 onChange={(e) => setTextFilter(col, e.target.value)}
                 data-testid={`filter-input-${col}`}

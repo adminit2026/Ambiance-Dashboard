@@ -186,7 +186,8 @@ def build_match(date_from: Optional[str], date_to: Optional[str], marketplaces: 
     if marketplaces:
         m["marketplace"] = {"$in": marketplaces}
     if sku:
-        m["sku"] = {"$regex": re.escape(sku), "$options": "i"}
+        # Prefix match to be consistent with the frontend "SKU starts with" filter.
+        m["sku"] = {"$regex": "^" + re.escape(sku), "$options": "i"}
     return m
 
 

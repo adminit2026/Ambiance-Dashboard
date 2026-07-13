@@ -213,6 +213,37 @@ async def upload_asin_mapping(file: UploadFile = File(...), user=Depends(require
     return {"rows_total": len(rows), "inserted": inserted, "updated": updated, "orders_remapped": remapped}
 
 
+@router.get("/asin-mappings/unmapped")
+async def unmapped_asins_csv(user=Depends(get_current_user)):
+    """Return a downloadable CSV of Amazon-shape SKUs that still look like raw ASINs
+    (i.e. never got remapped because they're missing from any uploaded mapping file).
+    Column layout matches the 'combined' ASIN mapping template so the seller can fill
+    the empty SKU / Leroy Merlin ID columns and re-upload it as-is.
+    """
+    pipeline = [
+        {"$match": {"source": "amazon_po", "sku": {"$regex": "^B0[A-Z0-9]{7,}$"}}},
+        {"$group": {
+            "_id": "$sku",
+            "product_name": {"$first": "$product_name"},
+            "units": {"$sum": "$quantity"},
+            "orders": {"$sum": 1},
+        }},
+        {"$sort": {"units": -1}},
+    ]
+    rows = await db.orders.aggregate(pipeline).to_list(50000)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["SKU", "Leroy Merlin ID", "Amazon ASIN", "amazon title", "units_sold", "orders"])
+    for r in rows:
+        w.writerow(["", "", r["_id"], r.get("product_name") or "", r.get("units", 0), r.get("orders", 0)])
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=unmapped_amazon_asins.csv"},
+    )
+
+
 @router.get("/asin-mappings")
 async def list_asin_mappings(search: Optional[str] = None, limit: int = 5000, user=Depends(get_current_user)):
     q: Dict[str, Any] = {}

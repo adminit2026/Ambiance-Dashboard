@@ -133,10 +133,10 @@ export default function FiltersBar({ filters, setFilters, showSku = true, rightS
         </div>
         {showSku && (
           <div className="flex flex-col">
-            <label className="eyebrow mb-1">{t("filters.sku") || "SKU contains"}</label>
+            <label className="eyebrow mb-1">{t("filters.sku") || "SKU starts with"}</label>
             <input
               type="text"
-              placeholder="e.g. SAND_"
+              placeholder="e.g. col-lam-"
               data-testid="filter-sku"
               className="in w-44"
               value={filters.sku}
