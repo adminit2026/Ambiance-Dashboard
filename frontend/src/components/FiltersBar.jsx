@@ -3,7 +3,13 @@ import api from "@/lib/api";
 import { useT } from "@/lib/i18n";
 
 function isoDate(d) {
-  return d.toISOString().slice(0, 10);
+  // Format to local YYYY-MM-DD. Using toISOString() would shift dates to UTC
+  // which, for users east of UTC (e.g. Europe), turns "July 1 00:00 local"
+  // into "June 30 22:00 UTC" and breaks presets like MTD.
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function presetRange(key) {
@@ -45,8 +51,8 @@ export function useFilters(initial = {}) {
   const today = new Date();
   const yearStart = new Date(today.getFullYear(), 0, 1);
   const [filters, setFilters] = useState({
-    date_from: initial.date_from || yearStart.toISOString().slice(0, 10),
-    date_to: initial.date_to || today.toISOString().slice(0, 10),
+    date_from: initial.date_from || isoDate(yearStart),
+    date_to: initial.date_to || isoDate(today),
     marketplaces: initial.marketplaces || "",
     sku: initial.sku || "",
   });

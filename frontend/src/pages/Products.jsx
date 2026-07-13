@@ -4,7 +4,8 @@ import FiltersBar, { useFilters } from "@/components/FiltersBar";
 import api from "@/lib/api";
 import { fmtEur, fmtNum, fmtPct } from "@/lib/format";
 import { useT } from "@/lib/i18n";
-import { Filter, X } from "lucide-react";
+import { Filter, X, Download } from "lucide-react";
+import { toast } from "sonner";
 
 const NUM_COLS = ["units", "orders", "revenue_eur", "cogs_eur", "margin_eur", "margin_pct"];
 const TEXT_COLS = ["sku", "product_name"];
@@ -21,7 +22,7 @@ export default function Products() {
 
   useEffect(() => {
     setLoading(true);
-    api.get("/dashboard/top-skus", { params: { ...params, limit: 500 } })
+    api.get("/dashboard/top-skus", { params: { ...params, limit: 20000 } })
       .then((r) => setRows(r.data))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -34,7 +35,12 @@ export default function Products() {
       if (TEXT_COLS.includes(col)) {
         const q = String(val).toLowerCase();
         if (!q) return;
-        result = result.filter((r) => String(r[col] || "").toLowerCase().includes(q));
+        // SKU uses "starts with" semantics per user preference; product_name stays contains.
+        if (col === "sku") {
+          result = result.filter((r) => String(r[col] || "").toLowerCase().startsWith(q));
+        } else {
+          result = result.filter((r) => String(r[col] || "").toLowerCase().includes(q));
+        }
       } else if (NUM_COLS.includes(col)) {
         const { min, max } = val;
         if (min !== undefined && min !== "" && !isNaN(Number(min))) {
@@ -52,6 +58,31 @@ export default function Products() {
     });
     return result;
   }, [rows, colFilters, sortKey, sortDir]);
+
+  const exportCsv = () => {
+    if (filtered.length === 0) {
+      toast.error("Nothing to export — check your filters");
+      return;
+    }
+    const cols = ["sku", "product_name", "units", "orders", "revenue_eur", "cogs_eur", "margin_eur", "margin_pct"];
+    const header = ["SKU", "Product", "Units", "Orders", "Revenue (EUR)", "COGS (EUR)", "Margin (EUR)", "Margin %"];
+    const esc = (v) => {
+      const s = v === null || v === undefined ? "" : String(v);
+      return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [header.join(","), ...filtered.map((r) => cols.map((c) => esc(r[c])).join(","))];
+    const blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const stamp = new Date().toISOString().slice(0, 10);
+    a.download = `product_performance_${stamp}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${filtered.length.toLocaleString()} rows`);
+  };
 
   const setTextFilter = (col, val) => setColFilters({ ...colFilters, [col]: val });
   const setNumFilter = (col, key, val) => setColFilters({ ...colFilters, [col]: { ...(colFilters[col] || {}), [key]: val } });
@@ -138,11 +169,21 @@ export default function Products() {
               <span className="ml-3 pill" style={{ color: "#0055FF", background: "#E0EAFF", borderColor: "transparent" }}>{activeFilterCount} filters active</span>
             )}
           </div>
-          {activeFilterCount > 0 && (
-            <button onClick={clearAll} className="inline-flex items-center gap-1 text-xs hover:text-[#FF2A2A] transition-colors" data-testid="clear-all-filters">
-              <X size={12} /> {t("products.clear")}
+          <div className="flex items-center gap-3">
+            {activeFilterCount > 0 && (
+              <button onClick={clearAll} className="inline-flex items-center gap-1 text-xs hover:text-[#FF2A2A] transition-colors" data-testid="clear-all-filters">
+                <X size={12} /> {t("products.clear")}
+              </button>
+            )}
+            <button
+              onClick={exportCsv}
+              className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded border border-[#111215] bg-white hover:bg-[#111215] hover:text-white transition-colors"
+              data-testid="products-export"
+              title="Download current view as CSV"
+            >
+              <Download size={13} strokeWidth={2} /> Export CSV
             </button>
-          )}
+          </div>
         </div>
 
         <div className="surface overflow-x-auto" style={{ overflow: "visible" }}>
