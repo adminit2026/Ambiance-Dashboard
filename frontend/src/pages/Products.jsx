@@ -4,11 +4,23 @@ import FiltersBar, { useFilters } from "@/components/FiltersBar";
 import api from "@/lib/api";
 import { fmtEur, fmtNum, fmtPct } from "@/lib/format";
 import { useT } from "@/lib/i18n";
-import { Filter, X, Download } from "lucide-react";
+import { Filter, X, Download, Boxes } from "lucide-react";
 import { toast } from "sonner";
 
 const NUM_COLS = ["units", "orders", "revenue_eur", "cogs_eur", "margin_eur", "margin_pct"];
 const TEXT_COLS = ["sku", "product_name"];
+
+// "Stock items" preset — keeps only SKUs starting with any of these prefixes
+// (case-insensitive). J3-privacy is explicitly excluded even though J3- matches.
+const STOCK_PREFIXES = ["amb-", "j-", "j3-", "j4-", "3d-", "carp-"];
+const STOCK_EXCLUDE_PREFIXES = ["j3-privacy"];
+
+function isStockSku(sku) {
+  const s = String(sku || "").toLowerCase();
+  if (!STOCK_PREFIXES.some((p) => s.startsWith(p))) return false;
+  if (STOCK_EXCLUDE_PREFIXES.some((p) => s.startsWith(p))) return false;
+  return true;
+}
 
 export default function Products() {
   const { t } = useT();
@@ -19,6 +31,7 @@ export default function Products() {
   const [sortKey, setSortKey] = useState("revenue_eur");
   const [sortDir, setSortDir] = useState("desc");
   const [openFilter, setOpenFilter] = useState(null);
+  const [stockOnly, setStockOnly] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -30,6 +43,9 @@ export default function Products() {
 
   const filtered = useMemo(() => {
     let result = rows;
+    if (stockOnly) {
+      result = result.filter((r) => isStockSku(r.sku));
+    }
     Object.entries(colFilters).forEach(([col, val]) => {
       if (!val) return;
       if (TEXT_COLS.includes(col)) {
@@ -57,7 +73,7 @@ export default function Products() {
       return sortDir === "asc" ? (av || 0) - (bv || 0) : (bv || 0) - (av || 0);
     });
     return result;
-  }, [rows, colFilters, sortKey, sortDir]);
+  }, [rows, colFilters, sortKey, sortDir, stockOnly]);
 
   const exportCsv = () => {
     if (filtered.length === 0) {
@@ -170,6 +186,18 @@ export default function Products() {
             )}
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setStockOnly((v) => !v)}
+              className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded border transition-colors ${
+                stockOnly
+                  ? "bg-[#0055FF] text-white border-transparent"
+                  : "bg-white text-[#111215] border-[#D5D7DC] hover:border-[#0055FF] hover:text-[#0055FF]"
+              }`}
+              data-testid="products-stock-only"
+              title="Show only stock items — SKUs starting with AMB-, J-, J3-, J4-, 3D-, carp- (excludes J3-privacy)"
+            >
+              <Boxes size={13} strokeWidth={2} /> Stock items{stockOnly ? " · ON" : ""}
+            </button>
             {activeFilterCount > 0 && (
               <button onClick={clearAll} className="inline-flex items-center gap-1 text-xs hover:text-[#FF2A2A] transition-colors" data-testid="clear-all-filters">
                 <X size={12} /> {t("products.clear")}
