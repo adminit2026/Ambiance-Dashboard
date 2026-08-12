@@ -225,7 +225,7 @@ export default function Products() {
         </div>
 
         <div className="surface overflow-x-auto" style={{ overflow: "visible" }}>
-          <table className="dense w-full" data-testid="products-table">
+          <table className="dense w-full text-xs products-tight" data-testid="products-table">
             <thead>
               <tr>
                 <Col col="sku" label={t("products.col_sku")} type="text" />
@@ -234,11 +234,11 @@ export default function Products() {
                 <Col col="orders" label={t("products.col_orders")} type="num" align="right" />
                 <Col col="revenue_eur" label={t("products.col_revenue")} type="num" align="right" />
                 <Col col="cogs_eur" label={t("products.col_cogs")} type="num" align="right" />
-                <Col col="operational_eur" label="Op." type="num" align="right" />
-                <Col col="production_shipping_eur" label="Prod. ship" type="num" align="right" />
-                <Col col="commission_eur" label="Commission" type="num" align="right" />
+                <Col col="operational_eur" label="Op" type="num" align="right" />
+                <Col col="production_shipping_eur" label="Ship" type="num" align="right" />
+                <Col col="commission_eur" label="Comm" type="num" align="right" />
                 <Col col="margin_eur" label={t("products.col_margin")} type="num" align="right" />
-                <Col col="margin_pct" label={t("products.col_margin_pct")} type="num" align="right" />
+                <Col col="margin_pct" label="%" type="num" align="right" />
               </tr>
             </thead>
             <tbody>
@@ -251,7 +251,7 @@ export default function Products() {
               {!loading && filtered.map((r) => (
                 <tr key={r.sku} data-testid={`product-row-${r.sku}`}>
                   <td className="font-mono-num font-medium">{r.sku}</td>
-                  <td className="max-w-[400px] truncate" title={r.product_name}>{r.product_name || "—"}</td>
+                  <td className="max-w-[240px] truncate" title={r.product_name}>{r.product_name || "—"}</td>
                   <td className="text-right font-mono-num">{fmtNum(r.units)}</td>
                   <td className="text-right font-mono-num">{fmtNum(r.orders)}</td>
                   <td className="text-right font-mono-num">{fmtEur(r.revenue_eur)}</td>

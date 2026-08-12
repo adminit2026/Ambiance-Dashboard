@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 10: validated Products page horizontal-overflow fix + margin parity regression. Backend: 2/2 pytest passed — margin parity for Leroy Merlin - ES between /api/dashboard/top-skus (sum(margin_eur)/sum(total_revenue_eur)) and /api/dashboard/profit-loss margin_pct is within 0.1% (diff ≈ 0). Frontend at /products: NO page-level horizontal overflow at 1440px (scroll=1440, client=1440), 1600px, or 1920px. All 11 headers render (SKU, Product, Units, Orders, Revenue, COGS, Op, Ship, Comm, Margin, %) each with ~103px width, none truncated to zero. Filter icons open popups: [data-testid='filter-icon-sku'] opens text input; [data-testid='filter-icon-units'] opens numeric min/max. Sort by Revenue re-orders rows (asc/desc toggle verified). Top 'SKU STARTS WITH' input filters correctly — typing 'col-lam' returns 30 sample rows all starting with 'col-lam'. Stock items toggle filters to AMB-/J-/J3-/J4-/3D-/carp- prefixes only (80 rows sampled, all match, zero j3-privacy). Export CSV downloads product_performance_2026-08-12.csv with header containing 'Operational', 'Production Shipping', and 'Commission'. Zero console errors during full page walk.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/products table rows", "issues": ["With table-layout:fixed + white-space:nowrap on td, long SKU strings (e.g. 'col-floor-ROS-C871...') visually bleed into the Product column instead of truncating with ellipsis. The SKU td has no overflow:hidden/text-overflow:ellipsis. Cosmetic only — headers, filters, and page width are all correct. Suggest adding overflow:hidden; text-overflow:ellipsis to .products-tight td (or at least to the SKU td) for a cleaner look."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration10.py",
+    "/app/test_reports/pytest/iteration10_results.xml"
+  ],
+  "action_items": [
+    "(Optional cosmetic) Add overflow:hidden; text-overflow:ellipsis to .products-tight td to prevent long SKUs from bleeding into the Product column visually. Functionality is unaffected."
+  ],
+  "critical_code_review_comments": [
+    "Products.jsx line 227: div uses className='surface overflow-x-auto' with an inline style overflow:'visible' that overrides the class. This is intentional because the fit-to-viewport fix relies on the table.products-tight table-layout:fixed shrinking cells to fit, but if the fixed-width sum ever exceeds the container the overflow-x-auto will be silently defeated. Recommend either removing the class or removing the inline style to avoid confusion.",
+    "The 'SKU starts with' behaviour is implemented in two places: (a) top FiltersBar input, and (b) the per-column SKU filter which uses startsWith semantics (line 55-56). Both paths verified working; parity preserved.",
+    "Margin parity confirmed: for Leroy Merlin - ES the top-skus aggregate (sum margin / sum total_revenue) matches profit-loss.margin_pct within <0.1pp — no regression from iter 9."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration10.py (new — 2 tests: margin parity + top-skus column shape)"],
+  "success_rate": {"backend": "100% (2/2 pytest passed)", "frontend": "100% (all requested checks pass: no page overflow at 1440/1600/1920, 11 headers, filter icons, sort, top SKU filter, stock toggle, CSV export)"},
+  "test_credentials": "admin@ambiancesticker.com / Ambiance2026! (verified)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Products page fit-to-viewport fix verified end-to-end. Table width auto-fits container thanks to table-layout:fixed in .products-tight (App.css lines 62-64) + text-xs on <table>. Login POST returns {token:'...'} — no cookie needed for API. Preview URL: https://ambiance-seller-hub.preview.emergentagent.com. Test file /app/backend/tests/test_iteration10.py runs in ~1s.",
+  "rca of the issue": "No bugs. Iter 10 focus was verifying the horizontal-overflow fix on /products. Root of the original problem (per E1's note): 11-column table with white-space:nowrap and default table-layout:auto forced a wider-than-viewport intrinsic width. Fix (.products-tight { table-layout: fixed; font-size: 11px; padding: 6px } + text-xs on table + max-w-[240px] on product name) collapses all columns to equal ~103px slices that fit the container. Verified DOM: scrollWidth == clientWidth at 1440/1600/1920. One cosmetic follow-up: SKU td lacks overflow:hidden so long strings visually bleed into the Product column, but this does not push the page wider — pure text rendering artifact."
+}
