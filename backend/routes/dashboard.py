@@ -431,45 +431,99 @@ async def top_skus(
     sku: Optional[str] = None,
     user=Depends(get_current_user),
 ):
+    """Per-SKU performance using the SAME cost formula as /dashboard/profit-loss so
+    margins reconcile line-by-line with the P&L Report:
+
+        Total Revenue = line_total_eur + shipping_cost_eur (customer shipping = income)
+        Deductions    = COGS + Operational + Production Shipping + Commission
+        Net Margin €  = Total Revenue − Deductions
+        Margin %      = Net Margin € / Total Revenue × 100
+
+    Operational cost, per-marketplace production shipping, and per-marketplace
+    commission are pulled from Settings and applied at the ORDER-LINE level so a
+    SKU that sells across multiple marketplaces gets the correct blended cost.
+    """
     match = build_match(date_from, date_to, parse_list(marketplaces), sku)
-    pipeline = [
-        {"$match": match} if match else {"$match": {}},
-        {"$group": {
-            "_id": "$sku",
-            "product_name": {"$first": "$product_name"},
-            "revenue": {"$sum": "$line_total_eur"},
-            "units": {"$sum": "$quantity"},
-            "orders": {"$addToSet": "$order_id"},
-        }},
-        {"$sort": {"revenue": -1}},
-        {"$limit": limit},
-    ]
-    rows = await db.orders.aggregate(pipeline).to_list(limit)
-    skus_needed = [r["_id"] for r in rows]
-    costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({"sku": {"$in": skus_needed}}, {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1})}
+    constants = await get_cost_constants()
+    op_cost = float(constants["operational_cost_per_unit"])
+    mk_shipping = constants["production_shipping_by_marketplace"] or {}
+    mk_commission = constants["commission_by_marketplace"] or {}
     rates = await get_rates()
+
+    # Aggregate every deduction at the line level, then roll up to SKU.
+    per_sku: Dict[str, dict] = {}
+    async for o in db.orders.find(
+        match,
+        {"sku": 1, "product_name": 1, "quantity": 1, "marketplace": 1,
+         "line_total_eur": 1, "shipping_cost_eur": 1, "order_id": 1},
+    ):
+        sku_id = o.get("sku")
+        if not sku_id:
+            continue
+        d = per_sku.setdefault(sku_id, {
+            "sku": sku_id,
+            "product_name": o.get("product_name") or "",
+            "units": 0,
+            "orders": set(),
+            "revenue": 0.0,
+            "ship_income": 0.0,
+            "operational": 0.0,
+            "prod_shipping": 0.0,
+            "commission": 0.0,
+        })
+        qty = int(o.get("quantity") or 0)
+        rev = float(o.get("line_total_eur") or 0)
+        ship = float(o.get("shipping_cost_eur") or 0)
+        mk = o.get("marketplace") or ""
+        d["units"] += qty
+        d["orders"].add(o.get("order_id"))
+        d["revenue"] += rev
+        d["ship_income"] += ship
+        d["operational"] += op_cost * qty
+        d["prod_shipping"] += float(mk_shipping.get(mk, 0)) * qty
+        d["commission"] += float(mk_commission.get(mk, 0)) / 100.0 * rev
+        if not d["product_name"] and o.get("product_name"):
+            d["product_name"] = o.get("product_name")
+
+    skus_needed = list(per_sku.keys())
+    costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find(
+        {"sku": {"$in": skus_needed}},
+        {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1},
+    )}
+
     out = []
-    for r in rows:
-        sku_id = r["_id"]
+    for sku_id, d in per_sku.items():
         c = costs_map.get(sku_id)
-        units = int(r["units"] or 0)
-        revenue = float(r["revenue"] or 0)
-        cogs = 0
+        units = d["units"]
+        cogs = 0.0
         if c:
-            cogs = to_eur((c["cost_per_unit"] + c.get("shipping_cost", 0)) * units, c.get("currency", "EUR"), rates)
-        margin = revenue - cogs
+            cogs = to_eur(
+                (c["cost_per_unit"] + c.get("shipping_cost", 0)) * units,
+                c.get("currency", "EUR"),
+                rates,
+            )
+        total_revenue = d["revenue"] + d["ship_income"]
+        deductions = cogs + d["operational"] + d["prod_shipping"] + d["commission"]
+        margin = total_revenue - deductions
+        margin_pct = (margin / total_revenue * 100) if total_revenue else 0
         out.append({
             "sku": sku_id,
-            "product_name": r["product_name"] or "",
-            "revenue_eur": round(revenue, 2),
+            "product_name": d["product_name"],
             "units": units,
-            "orders": len(r["orders"]),
+            "orders": len(d["orders"]),
+            "revenue_eur": round(d["revenue"], 2),
+            "ship_income_eur": round(d["ship_income"], 2),
+            "total_revenue_eur": round(total_revenue, 2),
             "cogs_eur": round(cogs, 2),
+            "operational_eur": round(d["operational"], 2),
+            "production_shipping_eur": round(d["prod_shipping"], 2),
+            "commission_eur": round(d["commission"], 2),
             "margin_eur": round(margin, 2),
-            "margin_pct": round((margin / revenue * 100) if revenue else 0, 2),
+            "margin_pct": round(margin_pct, 2),
             "has_cost": bool(c),
         })
-    return out
+    out.sort(key=lambda x: x["revenue_eur"], reverse=True)
+    return out[:limit]
 
 
 @router.get("/dashboard/customers")

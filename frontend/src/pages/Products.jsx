@@ -7,7 +7,7 @@ import { useT } from "@/lib/i18n";
 import { Filter, X, Download, Boxes } from "lucide-react";
 import { toast } from "sonner";
 
-const NUM_COLS = ["units", "orders", "revenue_eur", "cogs_eur", "margin_eur", "margin_pct"];
+const NUM_COLS = ["units", "orders", "revenue_eur", "cogs_eur", "operational_eur", "production_shipping_eur", "commission_eur", "margin_eur", "margin_pct"];
 const TEXT_COLS = ["sku", "product_name"];
 
 // "Stock items" preset — keeps only SKUs starting with any of these prefixes
@@ -80,8 +80,18 @@ export default function Products() {
       toast.error("Nothing to export — check your filters");
       return;
     }
-    const cols = ["sku", "product_name", "units", "orders", "revenue_eur", "cogs_eur", "margin_eur", "margin_pct"];
-    const header = ["SKU", "Product", "Units", "Orders", "Revenue (EUR)", "COGS (EUR)", "Margin (EUR)", "Margin %"];
+    const cols = [
+      "sku", "product_name", "units", "orders",
+      "revenue_eur", "ship_income_eur", "total_revenue_eur",
+      "cogs_eur", "operational_eur", "production_shipping_eur", "commission_eur",
+      "margin_eur", "margin_pct",
+    ];
+    const header = [
+      "SKU", "Product", "Units", "Orders",
+      "Revenue (EUR)", "Customer Shipping (EUR)", "Total Revenue (EUR)",
+      "COGS (EUR)", "Operational (EUR)", "Production Shipping (EUR)", "Commission (EUR)",
+      "Net Margin (EUR)", "Margin %",
+    ];
     const esc = (v) => {
       const s = v === null || v === undefined ? "" : String(v);
       return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -224,16 +234,19 @@ export default function Products() {
                 <Col col="orders" label={t("products.col_orders")} type="num" align="right" />
                 <Col col="revenue_eur" label={t("products.col_revenue")} type="num" align="right" />
                 <Col col="cogs_eur" label={t("products.col_cogs")} type="num" align="right" />
+                <Col col="operational_eur" label="Op." type="num" align="right" />
+                <Col col="production_shipping_eur" label="Prod. ship" type="num" align="right" />
+                <Col col="commission_eur" label="Commission" type="num" align="right" />
                 <Col col="margin_eur" label={t("products.col_margin")} type="num" align="right" />
                 <Col col="margin_pct" label={t("products.col_margin_pct")} type="num" align="right" />
               </tr>
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={8} className="text-center text-[#5E636E] py-12">{t("common.loading")}</td></tr>
+                <tr><td colSpan={11} className="text-center text-[#5E636E] py-12">{t("common.loading")}</td></tr>
               )}
               {!loading && filtered.length === 0 && (
-                <tr><td colSpan={8} className="text-center text-[#5E636E] py-12">{t("products.empty")}</td></tr>
+                <tr><td colSpan={11} className="text-center text-[#5E636E] py-12">{t("products.empty")}</td></tr>
               )}
               {!loading && filtered.map((r) => (
                 <tr key={r.sku} data-testid={`product-row-${r.sku}`}>
@@ -243,6 +256,9 @@ export default function Products() {
                   <td className="text-right font-mono-num">{fmtNum(r.orders)}</td>
                   <td className="text-right font-mono-num">{fmtEur(r.revenue_eur)}</td>
                   <td className="text-right font-mono-num text-[#5E636E]">{r.has_cost ? fmtEur(r.cogs_eur) : <span className="pill">{t("products.no_cost")}</span>}</td>
+                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEur(r.operational_eur || 0)}</td>
+                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEur(r.production_shipping_eur || 0)}</td>
+                  <td className="text-right font-mono-num text-[#5E636E]">{fmtEur(r.commission_eur || 0)}</td>
                   <td className="text-right font-mono-num">
                     {r.has_cost ? (
                       <span className={r.margin_eur >= 0 ? "text-[#00A859]" : "text-[#FF2A2A]"}>{fmtEur(r.margin_eur)}</span>
