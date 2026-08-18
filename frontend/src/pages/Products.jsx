@@ -249,19 +249,18 @@ export default function Products() {
                   <td className="text-right font-mono-num">{fmtNum(r.units)}</td>
                   <td className="text-right font-mono-num">{fmtNum(r.orders)}</td>
                   <td className="text-right font-mono-num">{fmtEur(r.revenue_eur)}</td>
-                  <td className="text-right font-mono-num text-[#5E636E]">{r.has_cost ? fmtEur(r.cogs_eur) : <span className="pill">{t("products.no_cost")}</span>}</td>
+                  <td className="text-right font-mono-num text-[#5E636E]" title={r.has_cost ? "" : "Upload production cost for this SKU in Uploads"}>
+                    {fmtEur(r.cogs_eur || 0)}
+                    {!r.has_cost && <span className="ml-1 text-[#FF9900] font-bold" title="No production cost uploaded — COGS treated as €0">⚠</span>}
+                  </td>
                   <td className="text-right font-mono-num text-[#5E636E]">{fmtEur(r.operational_eur || 0)}</td>
                   <td className="text-right font-mono-num text-[#5E636E]">{fmtEur(r.production_shipping_eur || 0)}</td>
                   <td className="text-right font-mono-num text-[#5E636E]">{fmtEur(r.commission_eur || 0)}</td>
                   <td className="text-right font-mono-num">
-                    {r.has_cost ? (
-                      <span className={r.margin_eur >= 0 ? "text-[#00A859]" : "text-[#FF2A2A]"}>{fmtEur(r.margin_eur)}</span>
-                    ) : "—"}
+                    <span className={r.margin_eur >= 0 ? "text-[#00A859]" : "text-[#FF2A2A]"}>{fmtEur(r.margin_eur)}</span>
                   </td>
                   <td className="text-right font-mono-num">
-                    {r.has_cost ? (
-                      <span className={`pill ${r.margin_pct >= 0 ? "pos" : "neg"}`}>{fmtPct(r.margin_pct)}</span>
-                    ) : "—"}
+                    <span className={r.margin_pct >= 0 ? "text-[#5E636E]" : "text-[#FF2A2A]"}>{fmtPct(r.margin_pct)}</span>
                   </td>
                 </tr>
               ))}

@@ -1,0 +1,22 @@
+{
+  "summary": "Iter 12 frontend-only verification of Products page display fix. Loaded /products (2,487 rows). Confirmed the '—' problem is gone: every row renders numeric values in all 9 required columns (Units, Orders, Revenue, COGS, Op, Ship, Comm, Margin €, Margin %). 1,399 has_cost=false rows show '€0⚠' in COGS while still showing non-empty Op/Ship/Comm/Margin €/Margin %. 1,088 has_cost=true rows show actual COGS with no ⚠. Margin € color is rgb(0,168,89) green when >=0 and rgb(255,42,42) red when <0. Margin % color is rgb(94,99,110) grey when >=0 and rgb(255,42,42) red when <0. Sort by Margin % ascending (2 clicks on [data-testid='sort-margin_pct']) puts most-negative at top (AMB-raclette -1822.6%, col-lam-danger-D20 -279.7%, ...). SKU-starts-with filter (AMB-) works (2487->26). Stock items toggle works (2487->157). Export Excel button [data-testid='products-export'] present and clickable. No dashes found anywhere in the 9 numeric columns.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Products.jsx renders 2,487 rows unvirtualised in a single table which is a scroll performance risk on lower-end machines; consider react-window or pagination when catalog grows."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (not tested)", "frontend": "100%"},
+  "test_credentials": "admin@ambiancesticker.com / Ambiance2026! (from prompt)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Products page display fix verified. All numeric cells populated. ⚠ marker present only on has_cost=false rows next to €0 COGS. Colors, sorting by margin_pct, SKU-starts-with filter, Stock-items toggle, and Export button all functional. Backend not retested (unchanged per iter 10 verification).",
+  "rca of the issue": "Not applicable - display fix confirmed working."
+}
