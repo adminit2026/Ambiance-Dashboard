@@ -27,7 +27,7 @@ export default function Prices() {
     );
   }, [data.items, search]);
 
-  const exportCsv = async () => {
+  const exportXlsx = async () => {
     const token = localStorage.getItem("ambiance_token");
     const qs = new URLSearchParams(params).toString();
     const resp = await fetch(`${API_BASE}/skus/prices/export?${qs}`, {
@@ -37,7 +37,7 @@ export default function Prices() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `sku_prices_${Date.now()}.csv`;
+    a.download = `sku_prices_${new Date().toISOString().slice(0, 10)}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -50,8 +50,8 @@ export default function Prices() {
         setFilters={setFilters}
         showSku={false}
         rightSlot={
-          <button onClick={exportCsv} className="btn-primary flex items-center gap-2" data-testid="prices-export-button">
-            <Download size={14} /> Export prices CSV
+          <button onClick={exportXlsx} className="btn-primary flex items-center gap-2" data-testid="prices-export-button">
+            <Download size={14} /> Export Excel
           </button>
         }
       />

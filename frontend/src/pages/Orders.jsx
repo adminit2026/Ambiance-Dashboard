@@ -18,7 +18,7 @@ export default function Orders() {
 
   useEffect(() => { setPage(0); }, [JSON.stringify(filters)]);
 
-  const exportCsv = async () => {
+  const exportXlsx = async () => {
     const token = localStorage.getItem("ambiance_token");
     const qs = new URLSearchParams(params).toString();
     const resp = await fetch(`${API_BASE}/orders/export?${qs}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -26,7 +26,7 @@ export default function Orders() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `orders_${Date.now()}.csv`;
+    a.download = `orders_${new Date().toISOString().slice(0, 10)}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -38,8 +38,8 @@ export default function Orders() {
         filters={filters}
         setFilters={setFilters}
         rightSlot={
-          <button onClick={exportCsv} className="btn-primary flex items-center gap-2" data-testid="export-csv-button">
-            <Download size={14} /> Export CSV
+          <button onClick={exportXlsx} className="btn-primary flex items-center gap-2" data-testid="export-csv-button">
+            <Download size={14} /> Export Excel
           </button>
         }
       />

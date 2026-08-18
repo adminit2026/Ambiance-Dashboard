@@ -1,14 +1,16 @@
-"""Orders list + CSV export."""
+"""Orders list + XLSX export."""
 import io
-import csv
 from typing import Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
 
 from core import db, get_current_user, build_match, parse_list
 
 router = APIRouter()
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 @router.get("/orders")
@@ -42,14 +44,16 @@ async def export_orders(
         "quantity", "unit_price", "line_total", "currency", "line_total_eur",
         "shipping_cost", "shipping_cost_eur", "vat", "status", "country", "city", "customer_email", "source",
     ]
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(fields)
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet("Orders")
+    ws.append(fields)
     async for o in db.orders.find(match, {f: 1 for f in fields}):
-        w.writerow([o.get(f, "") for f in fields])
+        ws.append([o.get(f, "") for f in fields])
+    buf = io.BytesIO()
+    wb.save(buf)
     buf.seek(0)
     return StreamingResponse(
-        iter([buf.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=orders_export.csv"},
+        buf,
+        media_type=XLSX_MIME,
+        headers={"Content-Disposition": 'attachment; filename="orders_export.xlsx"'},
     )

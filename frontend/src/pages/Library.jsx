@@ -42,14 +42,14 @@ export default function Library() {
     else { setSortKey(key); setSortDir("desc"); }
   };
 
-  const exportCsv = async () => {
+  const exportXlsx = async () => {
     const token = localStorage.getItem("ambiance_token");
     const resp = await fetch(`${API_BASE}/library/export`, { headers: { Authorization: `Bearer ${token}` } });
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `cost_library_${Date.now()}.csv`;
+    a.download = `cost_library_${new Date().toISOString().slice(0, 10)}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -85,7 +85,7 @@ export default function Library() {
           <span className="text-xs text-[#5E636E] font-mono-num">
             {fmtNum(filtered.length)} / {fmtNum(data.length)}
           </span>
-          <button onClick={exportCsv} className="btn-primary inline-flex items-center gap-2" data-testid="library-export">
+          <button onClick={exportXlsx} className="btn-primary inline-flex items-center gap-2" data-testid="library-export">
             <Download size={14} /> {t("library.export")}
           </button>
         </div>

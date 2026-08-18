@@ -75,7 +75,7 @@ export default function Products() {
     return result;
   }, [rows, colFilters, sortKey, sortDir, stockOnly]);
 
-  const exportCsv = () => {
+  const exportXlsx = async () => {
     if (filtered.length === 0) {
       toast.error("Nothing to export — check your filters");
       return;
@@ -92,21 +92,15 @@ export default function Products() {
       "COGS (EUR)", "Operational (EUR)", "Production Shipping (EUR)", "Commission (EUR)",
       "Net Margin (EUR)", "Margin %",
     ];
-    const esc = (v) => {
-      const s = v === null || v === undefined ? "" : String(v);
-      return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const lines = [header.join(","), ...filtered.map((r) => cols.map((c) => esc(r[c])).join(","))];
-    const blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
+    const XLSX = await import("xlsx");
+    const data = [header, ...filtered.map((r) => cols.map((c) => (r[c] === undefined || r[c] === null ? "" : r[c])))];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    // Widen product-name column so it's readable when opened
+    ws["!cols"] = [{ wch: 24 }, { wch: 40 }, { wch: 8 }, { wch: 8 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 10 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Product Performance");
     const stamp = new Date().toISOString().slice(0, 10);
-    a.download = `product_performance_${stamp}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    XLSX.writeFile(wb, `product_performance_${stamp}.xlsx`);
     toast.success(`Exported ${filtered.length.toLocaleString()} rows`);
   };
 
@@ -214,12 +208,12 @@ export default function Products() {
               </button>
             )}
             <button
-              onClick={exportCsv}
+              onClick={exportXlsx}
               className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded border border-[#111215] bg-white hover:bg-[#111215] hover:text-white transition-colors"
               data-testid="products-export"
-              title="Download current view as CSV"
+              title="Download current view as Excel (.xlsx)"
             >
-              <Download size={13} strokeWidth={2} /> Export CSV
+              <Download size={13} strokeWidth={2} /> Export Excel
             </button>
           </div>
         </div>

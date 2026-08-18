@@ -5,6 +5,7 @@ from typing import Optional, Dict
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
 
 from core import (
     db, CANONICAL_MARKETPLACES,
@@ -13,6 +14,27 @@ from core import (
 )
 
 router = APIRouter()
+
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _xlsx_response(rows: list, headers: list, filename: str, sheet_name: str = "Sheet1") -> StreamingResponse:
+    """Serialise rows into an in-memory .xlsx workbook and return it as a download."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_name[:31] or "Sheet1"
+    ws.append(headers)
+    for r in rows:
+        ws.append(r)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type=XLSX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/library/skus")
@@ -97,18 +119,10 @@ async def library_skus(
 
 @router.get("/library/export")
 async def library_export(user=Depends(get_current_user)):
-    rows = await library_skus(limit=20000, user=user)
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["SKU", "Product", "Production Cost (EUR)", "Operational Cost (EUR)", "Production Shipping Cost (EUR)", "Commission %", "Commission EUR / unit", "Total Cost (EUR)", "Units Sold", "Revenue (EUR)"])
-    for r in rows:
-        w.writerow([r["sku"], r["product_name"], r["production_cost"], r["operational_cost"], r["production_shipping_cost"], r["commission_pct"], r["commission_eur_per_unit"], r["total_cost"], r["units_sold"], r["revenue_eur"]])
-    buf.seek(0)
-    return StreamingResponse(
-        iter([buf.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=cost_library.csv"},
-    )
+    rows_data = await library_skus(limit=20000, user=user)
+    headers = ["SKU", "Product", "Production Cost (EUR)", "Operational Cost (EUR)", "Production Shipping Cost (EUR)", "Commission %", "Commission EUR / unit", "Total Cost (EUR)", "Units Sold", "Revenue (EUR)"]
+    rows = [[r["sku"], r["product_name"], r["production_cost"], r["operational_cost"], r["production_shipping_cost"], r["commission_pct"], r["commission_eur_per_unit"], r["total_cost"], r["units_sold"], r["revenue_eur"]] for r in rows_data]
+    return _xlsx_response(rows, headers, "cost_library.xlsx", sheet_name="Cost Library")
 
 
 @router.get("/library/loss-makers")
@@ -261,10 +275,8 @@ async def sku_prices_export(
 ):
     data = await sku_prices(sku=sku, date_from=date_from, date_to=date_to, marketplaces=marketplaces, limit=10000, user=user)
     mks = data["marketplaces"]
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    header = ["SKU", "Product"] + [f"{m} (avg)" for m in mks] + [f"{m} (units)" for m in mks]
-    w.writerow(header)
+    headers = ["SKU", "Product"] + [f"{m} (avg)" for m in mks] + [f"{m} (units)" for m in mks]
+    rows = []
     for it in data["items"]:
         row = [it["sku"], it["product_name"]]
         for m in mks:
@@ -273,10 +285,5 @@ async def sku_prices_export(
         for m in mks:
             p = it["prices"].get(m)
             row.append(p["units"] if p else "")
-        w.writerow(row)
-    buf.seek(0)
-    return StreamingResponse(
-        iter([buf.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=sku_prices.csv"},
-    )
+        rows.append(row)
+    return _xlsx_response(rows, headers, "sku_prices.xlsx", sheet_name="SKU Prices")

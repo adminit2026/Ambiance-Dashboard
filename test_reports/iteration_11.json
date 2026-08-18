@@ -1,0 +1,20 @@
+{
+  "summary": "Iteration 11: full XLSX export verification (backend + frontend) for Products, Prices, Library, Orders. Backend pytest 5/5 PASSED: /api/library/export returns application/vnd.openxmlformats-officedocument.spreadsheetml.sheet with cost_library.xlsx, sheet 'Cost Library' and the exact 10 expected columns; /api/skus/prices/export?date_from=2026-01-01&date_to=2026-12-31 returns .xlsx with sheet 'SKU Prices' and headers starting SKU, Product, then marketplace-avg cols; /api/orders/export?date_from=2026-06-01&date_to=2026-06-30 returns .xlsx with sheet 'Orders' and exactly 19 columns starting order_date_iso, marketplace, channel_raw, order_id, sku. Regression confirmed: /api/templates/asin-mapping and /api/templates/cost still text/csv. Frontend Playwright: logged in as admin, visited /products /prices /library /orders — all four buttons ([data-testid='products-export'], [data-testid='prices-export-button'], [data-testid='library-export'], [data-testid='export-csv-button']) render label 'Export Excel' and trigger a download with the correct filename pattern: product_performance_2026-08-18.xlsx, sku_prices_2026-08-18.xlsx, cost_library_2026-08-18.xlsx, orders_2026-08-18.xlsx. Files opened successfully with openpyxl showing correct sheet names (Product Performance / SKU Prices / Cost Library / Orders) and column counts (13/38/10/19).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iteration11.py", "/app/test_reports/pytest/iteration11_results.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "The [data-testid='export-csv-button'] selector on Orders page is kept for backwards-compatibility per spec, but the label now says 'Export Excel' and it downloads .xlsx — the testid name is misleading. Consider renaming to 'orders-export' in a future cleanup so testids match user-visible behaviour.",
+    "Client-side Products export builds the xlsx in the browser via dynamic import('xlsx'@0.18.5) while the other three go through the backend. Bundle-size impact is deferred until the button is clicked (dynamic import), which is good; just be aware Products XLSX generation happens client-side and thus is limited by browser memory for very large datasets.",
+    "Orders endpoint uses openpyxl write_only Workbook (streaming) — correct choice for the 6.6k+ row dataset; confirmed 669KB file produced in <2s."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration11.py (new)"],
+  "success_rate": {"backend": "100% (5/5)", "frontend": "100% (4/4 downloads verified as valid xlsx workbooks)"},
+  "test_credentials": "admin@ambiancesticker.com / Ambiance2026! (verified)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All four XLSX export endpoints & buttons are green. Backend endpoints: GET /api/library/export, GET /api/skus/prices/export, GET /api/orders/export return XLSX. CSV templates (/api/templates/asin-mapping, /api/templates/cost) intentionally remain CSV. Playwright download events work; verify saved files with openpyxl.load_workbook in bash (openpyxl not installed inside the automation runtime).",
+  "rca of the issue": "No issue. Feature works end-to-end."
+}
