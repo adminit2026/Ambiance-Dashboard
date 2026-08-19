@@ -58,10 +58,11 @@ CDiscount, Maison, Leroy Merlin, Mano Mano (was MONECHELLE), PinkConnect Veepee 
 - Iter 9 verification: 21/21 backend pytest + full UI walk pass; 0 console errors.
 
 ### Iteration 6 (2026-02 fork)
-- **Production Shipping billed PER ORDER (not per unit)** — Backend counts distinct orders per marketplace × rate for Dashboard summary and P&L. SKU-level views (Product Performance / Top SKUs / Loss Makers / Library) bill the full per-order shipping to every SKU appearing in the order (`distinct_orders_containing_it × rate`). Trade-off: SKU sum can exceed P&L total on multi-SKU orders — P&L keeps the actual cash-out number. Verified: LM-FR 18 orders → €124.20 exact per SKU row. Settings label "EUR / order" + i18n EN/FR updated.
-- **Dashboard Top 20 SKUs (2 side-by-side cards)** — "Top 20 SKUs by Turnover" + "Top 20 SKUs by Units Sold". Respects FiltersBar. Backend: `GET /api/dashboard/top-skus?sort_by=units|revenue`.
-- **Loss Makers Suggested Price** — new columns "Suggested Price" + "Uplift %" on `/loss-makers`. Formula: `suggested_price = (production_cost + operational + prod_ship_per_unit) / (1 − (commission_rate + target_margin_pct)/100)`. UI target-margin input defaults to 0% (break-even). Backend: `GET /api/library/loss-makers?target_margin_pct=X`. Verified: fixed €22.37 with 15% commission → €26.31 break-even; with 15% target → €31.95.
-- Files touched: `/app/backend/routes/dashboard.py` (summary, profit_loss, top_skus + sort_by), `/app/backend/routes/library.py` (library_skus, loss_makers + target_margin_pct), `/app/frontend/src/pages/Dashboard.jsx`, `/app/frontend/src/pages/LossMakers.jsx`, `/app/frontend/src/pages/Settings.jsx`, `/app/frontend/src/lib/i18n.jsx`.
+- **Production Shipping billed PER ORDER (not per unit)** — Backend counts distinct orders per marketplace × rate for Dashboard summary and P&L. SKU-level views bill the full per-order shipping to every SKU appearing in the order (`distinct_orders_containing_it × rate`). Settings label "EUR / order" + i18n EN/FR updated.
+- **Dashboard Top 20 SKUs (2 side-by-side cards)** — "Top 20 SKUs by Turnover" + "Top 20 SKUs by Units Sold". Backend: `GET /api/dashboard/top-skus?sort_by=units|revenue`.
+- **Loss Makers Suggested Price** — new "Suggested Price" + "Uplift %" columns with a Target margin % input (default 0 = break-even). Backend: `GET /api/library/loss-makers?target_margin_pct=X`.
+- **Bulk Cost Upload on Settings** — added a compact bulk-upload block inside the Manual Cost Entry card (CSV/XLSX + Download template link + Upload button). Reuses existing `POST /api/uploads/costs` endpoint. Verified 3-row CSV → 3 inserted.
+- Files touched: `/app/backend/routes/dashboard.py`, `/app/backend/routes/library.py`, `/app/frontend/src/pages/Dashboard.jsx`, `/app/frontend/src/pages/LossMakers.jsx`, `/app/frontend/src/pages/Settings.jsx`, `/app/frontend/src/lib/i18n.jsx`.
 
 ## Next Tasks (P1)
 1. Suggested-new-price column on Loss Makers (auto target-margin compute).

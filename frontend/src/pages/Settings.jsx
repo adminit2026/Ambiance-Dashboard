@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import PageHeader from "@/components/PageHeader";
 import api, { formatApiError } from "@/lib/api";
 import { toast } from "sonner";
 import { fmtDate } from "@/lib/format";
 import { useT } from "@/lib/i18n";
-import { Trash2 } from "lucide-react";
+import { Trash2, UploadCloud, Loader2 } from "lucide-react";
 
 export default function Settings() {
   const { t } = useT();
@@ -15,6 +15,8 @@ export default function Settings() {
   const [manual, setManual] = useState({ sku: "", cost_per_unit: "", shipping_cost: "", currency: "EUR" });
   const [marketplaces, setMarketplaces] = useState([]);
   const [constants, setConstants] = useState({ operational_cost_per_unit: 0.5, production_shipping_by_marketplace: {}, commission_by_marketplace: {} });
+  const bulkInputRef = useRef(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const loadRates = () => api.get("/exchange-rates").then((r) => { setRates(r.data); setDraftRates(r.data); });
   const loadCosts = () => api.get("/costs").then((r) => setCosts(r.data));
@@ -92,6 +94,23 @@ export default function Settings() {
     await api.delete(`/costs/${encodeURIComponent(sku)}`);
     toast.success(`Removed cost for ${sku}`);
     loadCosts();
+  };
+
+  const bulkUpload = async (file) => {
+    if (!file) return;
+    setBulkBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post("/uploads/costs", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      toast.success(`${file.name} — ${data.inserted} new · ${data.updated} updated · ${data.rows_total} rows`);
+      loadCosts();
+    } catch (e) {
+      toast.error(formatApiError(e.response?.data?.detail) || "Bulk upload failed");
+    } finally {
+      setBulkBusy(false);
+      if (bulkInputRef.current) bulkInputRef.current.value = "";
+    }
   };
 
   const renormalize = async () => {
@@ -240,6 +259,40 @@ export default function Settings() {
             <input className="in w-full" placeholder="Currency (default EUR)" value={manual.currency} onChange={(e) => setManual({ ...manual, currency: e.target.value })} data-testid="manual-cost-currency" />
             <button className="btn-primary w-full" disabled={busy} data-testid="manual-cost-save">{t("settings.save_cost")}</button>
           </form>
+
+          <div className="mt-6 pt-6 border-t border-[#E5E7EB]" data-testid="bulk-cost-upload">
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <div className="eyebrow">Bulk upload</div>
+                <div className="text-sm text-[#5E636E] mt-1">CSV or XLSX with columns: <code className="text-[11px] bg-[#F5F6F8] px-1 py-0.5 rounded">sku, cost_per_unit, shipping_cost, currency</code></div>
+              </div>
+              <a
+                className="text-xs text-[#0055FF] hover:underline whitespace-nowrap"
+                href={`data:text/csv;charset=utf-8,${encodeURIComponent("sku,product_name,cost_per_unit,shipping_cost,currency\nSAND_118_15x20_white,Baby On Board Sticker White,1.20,0.00,EUR\nroll-mono_Bordeaux_60cmx1m,Decorative Vinyl Roll,3.50,0.00,EUR")}`}
+                download="cost_template.csv"
+                data-testid="bulk-cost-template"
+              >
+                Download template
+              </a>
+            </div>
+            <input
+              ref={bulkInputRef}
+              type="file"
+              accept=".csv,.xlsx,.xls,.tsv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              onChange={(e) => bulkUpload(e.target.files?.[0])}
+              className="hidden"
+              data-testid="bulk-cost-file-input"
+            />
+            <button
+              type="button"
+              onClick={() => bulkInputRef.current?.click()}
+              disabled={bulkBusy}
+              className="btn-secondary w-full flex items-center justify-center gap-2"
+              data-testid="bulk-cost-upload-btn"
+            >
+              {bulkBusy ? <><Loader2 size={16} className="animate-spin" /> Uploading…</> : <><UploadCloud size={16} /> Upload CSV / XLSX</>}
+            </button>
+          </div>
         </div>
 
         <div className="surface p-6">
