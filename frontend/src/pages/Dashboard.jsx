@@ -15,11 +15,15 @@ export default function Dashboard() {
   const [trend, setTrend] = useState([]);
   const [breakdown, setBreakdown] = useState([]);
   const [showTotal, setShowTotal] = useState(false);
+  const [topByRevenue, setTopByRevenue] = useState([]);
+  const [topByUnits, setTopByUnits] = useState([]);
 
   useEffect(() => {
     api.get("/dashboard/summary", { params }).then((r) => setSummary(r.data));
     api.get("/dashboard/trend", { params: { ...params, granularity: "day", rollup: true } }).then((r) => setTrend(r.data));
     api.get("/dashboard/marketplace-breakdown", { params: { ...params, rollup: true } }).then((r) => setBreakdown(r.data));
+    api.get("/dashboard/top-skus", { params: { ...params, limit: 20, sort_by: "revenue" } }).then((r) => setTopByRevenue(r.data));
+    api.get("/dashboard/top-skus", { params: { ...params, limit: 20, sort_by: "units" } }).then((r) => setTopByUnits(r.data));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(filters)]);
 
@@ -144,6 +148,62 @@ export default function Dashboard() {
           )}
         </div>
       </section>
+
+      <section className="px-8 pt-0 pb-12 grid grid-cols-1 lg:grid-cols-2 gap-0 grid-borders" data-testid="top-skus-section">
+        <TopSkuList
+          testId="top-skus-revenue"
+          eyebrow="Top performers"
+          title="Top 20 SKUs by Turnover"
+          rows={topByRevenue}
+          metricKey="revenue_eur"
+          metricLabel="Turnover"
+          formatter={fmtEur}
+        />
+        <TopSkuList
+          testId="top-skus-units"
+          eyebrow="Bestsellers"
+          title="Top 20 SKUs by Units Sold"
+          rows={topByUnits}
+          metricKey="units"
+          metricLabel="Units"
+          formatter={fmtNum}
+        />
+      </section>
+    </div>
+  );
+}
+
+function TopSkuList({ testId, eyebrow, title, rows, metricKey, metricLabel, formatter }) {
+  return (
+    <div className="p-6" data-testid={testId}>
+      <div className="eyebrow">{eyebrow}</div>
+      <h3 className="font-display text-xl font-semibold mt-1 mb-4">{title}</h3>
+      {rows.length === 0 ? (
+        <EmptyState text="No data" />
+      ) : (
+        <div className="overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[#5E636E] border-b border-[#E5E7EB]">
+                <th className="py-2 pr-2 w-8">#</th>
+                <th className="py-2 pr-2">SKU</th>
+                <th className="py-2 pr-2 hidden md:table-cell">Product</th>
+                <th className="py-2 text-right">{metricLabel}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={r.sku} className="border-b border-[#F2F3F5] last:border-b-0">
+                  <td className="py-2 pr-2 text-[#5E636E] font-mono-num">{i + 1}</td>
+                  <td className="py-2 pr-2 font-mono text-xs whitespace-nowrap max-w-[180px] truncate" title={r.sku}>{r.sku}</td>
+                  <td className="py-2 pr-2 text-[#5E636E] hidden md:table-cell max-w-[240px] truncate" title={r.product_name}>{r.product_name || "—"}</td>
+                  <td className="py-2 text-right font-mono-num">{formatter(r[metricKey])}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

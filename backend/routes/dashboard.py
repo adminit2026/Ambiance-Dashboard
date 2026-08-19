@@ -438,6 +438,7 @@ async def top_skus(
     date_to: Optional[str] = None,
     marketplaces: Optional[str] = None,
     sku: Optional[str] = None,
+    sort_by: str = Query("revenue", pattern="^(revenue|units)$"),
     user=Depends(get_current_user),
 ):
     """Per-SKU performance using the SAME cost formula as /dashboard/profit-loss so
@@ -548,7 +549,7 @@ async def top_skus(
             "margin_pct": round(margin_pct, 2),
             "has_cost": bool(c),
         })
-    out.sort(key=lambda x: x["revenue_eur"], reverse=True)
+    out.sort(key=lambda x: x["units"] if sort_by == "units" else x["revenue_eur"], reverse=True)
     return out[:limit]
 
 
