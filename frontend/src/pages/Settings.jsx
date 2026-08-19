@@ -152,7 +152,7 @@ export default function Settings() {
                   })}
                   data-testid={`prod-shipping-${mk}`}
                 />
-                <span className="text-xs text-[#5E636E]">EUR / unit</span>
+                <span className="text-xs text-[#5E636E]">EUR / order</span>
               </div>
             ))}
           </div>

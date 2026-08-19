@@ -57,6 +57,10 @@ CDiscount, Maison, Leroy Merlin, Mano Mano (was MONECHELLE), PinkConnect Veepee 
 - **Marketplaces × Country breakdown** — Marketplaces page now shows a per-country split panel when a marketplace is active. Leroy Merlin → FR 70.8% / ES 19.0% / IT 5.1% / PT 4.8% / PL 0.3%. Backend: GET /api/dashboard/marketplace-country-breakdown. Aggregate Dashboard remains marketplace-level only.
 - Iter 9 verification: 21/21 backend pytest + full UI walk pass; 0 console errors.
 
+### Iteration 6 (2026-02 fork)
+- **Production Shipping billed PER ORDER (not per unit)** — user requested change. Backend now counts distinct orders per marketplace and multiplies by rate for Dashboard summary and P&L. Per-SKU views (Product Performance / Top SKUs / Loss Makers / Library) allocate each order's shipping cost proportionally by quantity across the SKUs in that order, so totals reconcile exactly with marketplace-level P&L. Verified: at €6.90 test rate on Ambiance Web (6,615 orders) + Leroy Merlin - FR (568 orders), P&L=€49,562.70, Dashboard summary=€49,562.70, sum across SKUs in Library=€49,562.54 (0.16€ rounding drift). Frontend Settings label updated: "EUR / unit" → "EUR / order"; i18n EN+FR strings changed to "Production shipping per order by marketplace".
+- Files touched: `/app/backend/routes/dashboard.py` (summary, profit_loss, top_skus), `/app/backend/routes/library.py` (library_skus, loss_makers), `/app/frontend/src/pages/Settings.jsx`, `/app/frontend/src/lib/i18n.jsx`.
+
 ## Next Tasks (P1)
 1. Suggested-new-price column on Loss Makers (auto target-margin compute).
 2. Returns CSV export and Loss Makers CSV export.
