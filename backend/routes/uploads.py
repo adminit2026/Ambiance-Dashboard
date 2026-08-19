@@ -111,8 +111,14 @@ async def upload_costs(file: UploadFile = File(...), user=Depends(require_admin)
     rows = parse_cost_file(content, file.filename or "")
     if not rows:
         raise HTTPException(status_code=400, detail="No valid cost rows found. Ensure 'sku' and 'cost_per_unit' columns exist.")
+    # Snapshot the previous state of every SKU we're about to touch so we can
+    # truly UNDO the upload later (restore updated rows, delete inserted ones).
+    skus_touched = [r["sku"] for r in rows if r.get("sku")]
+    prior_docs = await db.costs.find({"sku": {"$in": skus_touched}}, {"_id": 0}).to_list(len(skus_touched) + 10)
+    snapshot_before = [{k: v for k, v in d.items() if k != "_id"} for d in prior_docs]
     inserted, updated = 0, 0
     inserted_keys: List[str] = []
+    updated_keys: List[str] = []
     for r in rows:
         r["updated_at"] = datetime.now(timezone.utc).isoformat()
         res = await db.costs.update_one({"sku": r["sku"]}, {"$set": r}, upsert=True)
@@ -121,6 +127,7 @@ async def upload_costs(file: UploadFile = File(...), user=Depends(require_admin)
             inserted_keys.append(r["sku"])
         else:
             updated += 1
+            updated_keys.append(r["sku"])
     await db.uploads.insert_one({
         "filename": file.filename,
         "source": "costs",
@@ -130,6 +137,8 @@ async def upload_costs(file: UploadFile = File(...), user=Depends(require_admin)
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "by": user["email"],
         "inserted_keys": inserted_keys,
+        "updated_keys": updated_keys,
+        "snapshot_before": snapshot_before,
         "target_collection": "costs",
     })
     return {"rows_total": len(rows), "inserted": inserted, "updated": updated}
@@ -142,6 +151,8 @@ async def uploads_history(user=Depends(get_current_user)):
     for d in docs:
         d["id"] = str(d.pop("_id"))
         d.pop("inserted_keys", None)
+        d.pop("snapshot_before", None)
+        d.pop("updated_keys", None)
     return docs
 
 
@@ -162,17 +173,25 @@ async def delete_upload(upload_id: str, user=Depends(require_admin)):
     keys = doc.get("inserted_keys") or []
     target = doc.get("target_collection")
     removed = 0
+    restored = 0
     if keys and target == "orders":
         r = await db.orders.delete_many({"line_key": {"$in": keys}})
         removed = r.deleted_count
-    elif keys and target == "costs":
-        r = await db.costs.delete_many({"sku": {"$in": keys}})
-        removed = r.deleted_count
+    elif target == "costs":
+        # Delete rows this upload newly inserted
+        if keys:
+            r = await db.costs.delete_many({"sku": {"$in": keys}})
+            removed = r.deleted_count
+        # Restore rows this upload overwrote (from the pre-upload snapshot)
+        for snap in (doc.get("snapshot_before") or []):
+            if snap.get("sku"):
+                await db.costs.update_one({"sku": snap["sku"]}, {"$set": snap}, upsert=True)
+                restored += 1
     elif keys and target == "sku_mappings":
         r = await db.sku_mappings.delete_many({"_id": {"$in": [ObjectId(k) for k in keys if len(k) == 24]}})
         removed = r.deleted_count
     await db.uploads.delete_one({"_id": oid})
-    return {"upload_id": upload_id, "removed": removed, "filename": doc.get("filename"), "source": doc.get("source")}
+    return {"upload_id": upload_id, "removed": removed, "restored": restored, "filename": doc.get("filename"), "source": doc.get("source")}
 
 
 @router.post("/uploads/asin-mapping")

@@ -61,8 +61,9 @@ CDiscount, Maison, Leroy Merlin, Mano Mano (was MONECHELLE), PinkConnect Veepee 
 - **Production Shipping billed PER ORDER (not per unit)** — Backend counts distinct orders per marketplace × rate for Dashboard summary and P&L. SKU-level views bill the full per-order shipping to every SKU appearing in the order (`distinct_orders_containing_it × rate`). Settings label "EUR / order" + i18n EN/FR updated.
 - **Dashboard Top 20 SKUs (2 side-by-side cards)** — "Top 20 SKUs by Turnover" + "Top 20 SKUs by Units Sold". Backend: `GET /api/dashboard/top-skus?sort_by=units|revenue`.
 - **Loss Makers Suggested Price** — new "Suggested Price" + "Uplift %" columns with a Target margin % input (default 0 = break-even). Backend: `GET /api/library/loss-makers?target_margin_pct=X`.
-- **Bulk Cost Upload on Settings** — added a compact bulk-upload block inside the Manual Cost Entry card (CSV/XLSX + Download template link + Upload button). Reuses existing `POST /api/uploads/costs` endpoint. Verified 3-row CSV → 3 inserted.
-- Files touched: `/app/backend/routes/dashboard.py`, `/app/backend/routes/library.py`, `/app/frontend/src/pages/Dashboard.jsx`, `/app/frontend/src/pages/LossMakers.jsx`, `/app/frontend/src/pages/Settings.jsx`, `/app/frontend/src/lib/i18n.jsx`.
+- **Bulk Cost Upload on Settings** — CSV/XLSX drop-in inside Manual Cost Entry card + Download template link. Reuses `POST /api/uploads/costs`.
+- **Undo Last Cost Upload** — cost upload now snapshots pre-upload state of every touched SKU. `DELETE /api/uploads/{id}` deletes inserted SKUs AND restores updated ones to their previous cost values. Settings page shows a "Last upload" strip with an Undo button. Verified round-trip: EXIST-A 5.00 → 7.77 → back to 5.00; NEW-A inserted → deleted.
+- Files touched: `/app/backend/routes/dashboard.py`, `/app/backend/routes/library.py`, `/app/backend/routes/uploads.py`, `/app/frontend/src/pages/Dashboard.jsx`, `/app/frontend/src/pages/LossMakers.jsx`, `/app/frontend/src/pages/Settings.jsx`, `/app/frontend/src/lib/i18n.jsx`.
 
 ## Next Tasks (P1)
 1. Suggested-new-price column on Loss Makers (auto target-margin compute).

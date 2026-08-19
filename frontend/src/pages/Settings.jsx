@@ -4,7 +4,7 @@ import api, { formatApiError } from "@/lib/api";
 import { toast } from "sonner";
 import { fmtDate } from "@/lib/format";
 import { useT } from "@/lib/i18n";
-import { Trash2, UploadCloud, Loader2 } from "lucide-react";
+import { Trash2, UploadCloud, Loader2, Undo2 } from "lucide-react";
 
 export default function Settings() {
   const { t } = useT();
@@ -17,9 +17,15 @@ export default function Settings() {
   const [constants, setConstants] = useState({ operational_cost_per_unit: 0.5, production_shipping_by_marketplace: {}, commission_by_marketplace: {} });
   const bulkInputRef = useRef(null);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [lastCostUpload, setLastCostUpload] = useState(null);
 
   const loadRates = () => api.get("/exchange-rates").then((r) => { setRates(r.data); setDraftRates(r.data); });
   const loadCosts = () => api.get("/costs").then((r) => setCosts(r.data));
+  const loadLastCostUpload = () =>
+    api.get("/uploads/history").then((r) => {
+      const last = (r.data || []).find((u) => u.source === "costs");
+      setLastCostUpload(last || null);
+    });
   const loadMks = () => api.get("/marketplaces").then((r) => setMarketplaces(r.data));
   const loadConstants = () => api.get("/cost-constants").then((r) => setConstants({
     operational_cost_per_unit: r.data.operational_cost_per_unit ?? 0.5,
@@ -27,7 +33,7 @@ export default function Settings() {
     commission_by_marketplace: r.data.commission_by_marketplace || {},
   }));
 
-  useEffect(() => { loadRates(); loadCosts(); loadMks(); loadConstants(); }, []);
+  useEffect(() => { loadRates(); loadCosts(); loadMks(); loadConstants(); loadLastCostUpload(); }, []);
 
   const saveRates = async () => {
     setBusy(true);
@@ -105,11 +111,30 @@ export default function Settings() {
       const { data } = await api.post("/uploads/costs", fd, { headers: { "Content-Type": "multipart/form-data" } });
       toast.success(`${file.name} — ${data.inserted} new · ${data.updated} updated · ${data.rows_total} rows`);
       loadCosts();
+      loadLastCostUpload();
     } catch (e) {
       toast.error(formatApiError(e.response?.data?.detail) || "Bulk upload failed");
     } finally {
       setBulkBusy(false);
       if (bulkInputRef.current) bulkInputRef.current.value = "";
+    }
+  };
+
+  const undoLastCostUpload = async () => {
+    if (!lastCostUpload) return;
+    const label = lastCostUpload.filename || "last upload";
+    const msg = `Undo "${label}"?\n\n• ${lastCostUpload.inserted || 0} SKUs added will be deleted\n• ${lastCostUpload.updated || 0} SKUs updated will be restored to their previous cost`;
+    if (!window.confirm(msg)) return;
+    setBulkBusy(true);
+    try {
+      const { data } = await api.delete(`/uploads/${lastCostUpload.id}`);
+      toast.success(`Reverted — ${data.removed} removed · ${data.restored} restored`);
+      loadCosts();
+      loadLastCostUpload();
+    } catch (e) {
+      toast.error(formatApiError(e.response?.data?.detail) || "Undo failed");
+    } finally {
+      setBulkBusy(false);
     }
   };
 
@@ -292,6 +317,30 @@ export default function Settings() {
             >
               {bulkBusy ? <><Loader2 size={16} className="animate-spin" /> Uploading…</> : <><UploadCloud size={16} /> Upload CSV / XLSX</>}
             </button>
+
+            {lastCostUpload && (
+              <div className="mt-3 p-3 rounded-lg bg-[#F8F9FB] border border-[#E5E7EB] flex items-center gap-3" data-testid="last-cost-upload">
+                <div className="flex-1 min-w-0">
+                  <div className="text-[10px] uppercase tracking-wider text-[#5E636E] font-semibold">Last upload</div>
+                  <div className="text-sm font-medium truncate" title={lastCostUpload.filename}>{lastCostUpload.filename || "—"}</div>
+                  <div className="text-xs text-[#5E636E] mt-0.5">
+                    <span className="font-mono-num">{lastCostUpload.inserted || 0}</span> new ·{" "}
+                    <span className="font-mono-num">{lastCostUpload.updated || 0}</span> updated ·{" "}
+                    {lastCostUpload.uploaded_at ? fmtDate(lastCostUpload.uploaded_at) : ""}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={undoLastCostUpload}
+                  disabled={bulkBusy}
+                  className="btn-secondary text-xs px-3 py-2 flex items-center gap-1.5 !text-[#FF2A2A] !border-[#FFCFCF] hover:!bg-[#FFF3F3]"
+                  data-testid="undo-cost-upload-btn"
+                  title="Delete rows this upload added, and restore rows it overwrote to their previous values"
+                >
+                  <Undo2 size={14} /> Undo
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
