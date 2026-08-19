@@ -4,7 +4,7 @@ import api, { formatApiError } from "@/lib/api";
 import { toast } from "sonner";
 import { fmtDate } from "@/lib/format";
 import { useT } from "@/lib/i18n";
-import { Trash2, UploadCloud, Loader2, Undo2 } from "lucide-react";
+import { Trash2, UploadCloud, Loader2, Undo2, Shield, ShieldCheck } from "lucide-react";
 
 export default function Settings() {
   const { t } = useT();
@@ -18,9 +18,11 @@ export default function Settings() {
   const bulkInputRef = useRef(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [lastCostUpload, setLastCostUpload] = useState(null);
+  const [master, setMaster] = useState({ exists: false, count: 0, saved_at: null, saved_by: null });
 
   const loadRates = () => api.get("/exchange-rates").then((r) => { setRates(r.data); setDraftRates(r.data); });
   const loadCosts = () => api.get("/costs").then((r) => setCosts(r.data));
+  const loadMaster = () => api.get("/costs/master/status").then((r) => setMaster(r.data));
   const loadLastCostUpload = () =>
     api.get("/uploads/history").then((r) => {
       const last = (r.data || []).find((u) => u.source === "costs");
@@ -33,7 +35,7 @@ export default function Settings() {
     commission_by_marketplace: r.data.commission_by_marketplace || {},
   }));
 
-  useEffect(() => { loadRates(); loadCosts(); loadMks(); loadConstants(); loadLastCostUpload(); }, []);
+  useEffect(() => { loadRates(); loadCosts(); loadMks(); loadConstants(); loadLastCostUpload(); loadMaster(); }, []);
 
   const saveRates = async () => {
     setBusy(true);
@@ -136,6 +138,36 @@ export default function Settings() {
     } finally {
       setBulkBusy(false);
     }
+  };
+
+  const saveMaster = async () => {
+    const msg = master.exists
+      ? `Overwrite the existing master price list?\n\nCurrent master has ${master.count} SKUs, saved on ${fmtDate(master.saved_at)}.\nThe new master will be a snapshot of ${costs.length} current SKU costs.`
+      : `Save the current ${costs.length} SKU costs as your master price list?\n\nYou can Restore back to this snapshot anytime — even if a future upload corrupts your prices.`;
+    if (!window.confirm(msg)) return;
+    setBulkBusy(true);
+    try {
+      const { data } = await api.post("/costs/master/save");
+      toast.success(`Master saved — ${data.saved} SKUs locked in`);
+      loadMaster();
+    } catch (e) {
+      toast.error(formatApiError(e.response?.data?.detail) || "Save failed");
+    } finally { setBulkBusy(false); }
+  };
+
+  const restoreMaster = async () => {
+    if (!master.exists) return;
+    const msg = `Restore ALL costs to the master price list?\n\n• Every current cost will be REPLACED with the master values (${master.count} SKUs)\n• Any changes made since ${fmtDate(master.saved_at)} will be lost\n\nProceed?`;
+    if (!window.confirm(msg)) return;
+    setBulkBusy(true);
+    try {
+      const { data } = await api.post("/costs/master/restore");
+      toast.success(`Restored — ${data.restored} SKUs reset to master`);
+      loadCosts();
+      loadLastCostUpload();
+    } catch (e) {
+      toast.error(formatApiError(e.response?.data?.detail) || "Restore failed");
+    } finally { setBulkBusy(false); }
   };
 
   const renormalize = async () => {
@@ -341,6 +373,47 @@ export default function Settings() {
                 </button>
               </div>
             )}
+
+            <div className="mt-4 p-3 rounded-lg border border-[#0055FF]/20 bg-[#EAF1FF]" data-testid="master-price-list">
+              <div className="flex items-start gap-3">
+                {master.exists ? <ShieldCheck size={20} className="text-[#0055FF] mt-0.5 shrink-0" /> : <Shield size={20} className="text-[#5E636E] mt-0.5 shrink-0" />}
+                <div className="flex-1 min-w-0">
+                  <div className="text-[10px] uppercase tracking-wider text-[#0055FF] font-semibold">Master price list</div>
+                  {master.exists ? (
+                    <div className="text-xs text-[#5E636E] mt-0.5">
+                      <span className="font-mono-num text-[#0F1116] font-semibold">{master.count}</span> SKUs locked in ·{" "}
+                      saved {fmtDate(master.saved_at)}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-[#5E636E] mt-0.5">No master saved yet. Save your current costs as the master to protect against bad uploads.</div>
+                  )}
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={saveMaster}
+                      disabled={bulkBusy || costs.length === 0}
+                      className="btn-secondary text-xs px-3 py-1.5"
+                      data-testid="save-master-btn"
+                      title="Snapshot current costs as the canonical master price list"
+                    >
+                      {master.exists ? "Overwrite master" : "Save as master"}
+                    </button>
+                    {master.exists && (
+                      <button
+                        type="button"
+                        onClick={restoreMaster}
+                        disabled={bulkBusy}
+                        className="btn-primary text-xs px-3 py-1.5"
+                        data-testid="restore-master-btn"
+                        title="Reset every SKU cost back to the master price list"
+                      >
+                        Restore from master
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 

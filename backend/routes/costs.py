@@ -36,6 +36,45 @@ async def delete_cost(sku: str, user=Depends(require_admin)):
     return {"ok": True}
 
 
+# ------------------- Master price list (canonical snapshot) -------------------
+@router.get("/costs/master/status")
+async def master_status(user=Depends(get_current_user)):
+    """Return metadata about the saved master price list (if any)."""
+    meta = await db.costs_master_meta.find_one({"_id": "master"}, {"_id": 0})
+    count = await db.costs_master.count_documents({})
+    return {"exists": count > 0, "count": count, "saved_at": (meta or {}).get("saved_at"), "saved_by": (meta or {}).get("saved_by")}
+
+
+@router.post("/costs/master/save")
+async def save_master(user=Depends(require_admin)):
+    """Freeze the current costs collection as the canonical master price list."""
+    await db.costs_master.delete_many({})
+    docs = [c async for c in db.costs.find({}, {"_id": 0})]
+    if docs:
+        await db.costs_master.insert_many(docs)
+    now = datetime.now(timezone.utc).isoformat()
+    await db.costs_master_meta.update_one(
+        {"_id": "master"},
+        {"$set": {"saved_at": now, "saved_by": user["email"], "count": len(docs)}},
+        upsert=True,
+    )
+    return {"saved": len(docs), "saved_at": now}
+
+
+@router.post("/costs/master/restore")
+async def restore_master(user=Depends(require_admin)):
+    """Replace the working costs collection with the master price list snapshot."""
+    count = await db.costs_master.count_documents({})
+    if count == 0:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="No master price list saved yet. Save one first.")
+    await db.costs.delete_many({})
+    docs = [c async for c in db.costs_master.find({}, {"_id": 0})]
+    if docs:
+        await db.costs.insert_many(docs)
+    return {"restored": len(docs)}
+
+
 # ------------------- Exchange rates -------------------
 @router.get("/exchange-rates")
 async def get_exchange_rates(user=Depends(get_current_user)):

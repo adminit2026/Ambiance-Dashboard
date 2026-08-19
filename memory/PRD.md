@@ -58,12 +58,13 @@ CDiscount, Maison, Leroy Merlin, Mano Mano (was MONECHELLE), PinkConnect Veepee 
 - Iter 9 verification: 21/21 backend pytest + full UI walk pass; 0 console errors.
 
 ### Iteration 6 (2026-02 fork)
-- **Production Shipping billed PER ORDER (not per unit)** — Backend counts distinct orders per marketplace × rate for Dashboard summary and P&L. SKU-level views bill the full per-order shipping to every SKU appearing in the order (`distinct_orders_containing_it × rate`). Settings label "EUR / order" + i18n EN/FR updated.
-- **Dashboard Top 20 SKUs (2 side-by-side cards)** — "Top 20 SKUs by Turnover" + "Top 20 SKUs by Units Sold". Backend: `GET /api/dashboard/top-skus?sort_by=units|revenue`.
-- **Loss Makers Suggested Price** — new "Suggested Price" + "Uplift %" columns with a Target margin % input (default 0 = break-even). Backend: `GET /api/library/loss-makers?target_margin_pct=X`.
-- **Bulk Cost Upload on Settings** — CSV/XLSX drop-in inside Manual Cost Entry card + Download template link. Reuses `POST /api/uploads/costs`.
-- **Undo Last Cost Upload** — cost upload now snapshots pre-upload state of every touched SKU. `DELETE /api/uploads/{id}` deletes inserted SKUs AND restores updated ones to their previous cost values. Settings page shows a "Last upload" strip with an Undo button. Verified round-trip: EXIST-A 5.00 → 7.77 → back to 5.00; NEW-A inserted → deleted.
-- Files touched: `/app/backend/routes/dashboard.py`, `/app/backend/routes/library.py`, `/app/backend/routes/uploads.py`, `/app/frontend/src/pages/Dashboard.jsx`, `/app/frontend/src/pages/LossMakers.jsx`, `/app/frontend/src/pages/Settings.jsx`, `/app/frontend/src/lib/i18n.jsx`.
+- **Production Shipping billed PER ORDER** — Backend counts distinct orders per marketplace × rate for Dashboard summary and P&L. SKU-level views bill full per-order shipping to every SKU appearing in the order.
+- **Dashboard Top 20 SKUs (2 side-by-side cards)** — "by Turnover" + "by Units Sold". Backend: `GET /api/dashboard/top-skus?sort_by=units|revenue`.
+- **Loss Makers Suggested Price** — "Suggested Price" + "Uplift %" columns with Target margin % input (default 0 = break-even). Backend: `GET /api/library/loss-makers?target_margin_pct=X`.
+- **Bulk Cost Upload on Settings** — CSV/XLSX drop-in inside Manual Cost Entry card + Download template link. Handles the 30k-row canonical `Sheet3` format (Cout de Production, FBM Frais poste + packaging).
+- **Undo Last Cost Upload** — snapshot-based restore (`inserted_keys` deletes + `snapshot_before` restores).
+- **Master Price List (canonical snapshot)** — new `costs_master` collection persists a locked-in master. Backend: `GET/POST /api/costs/master/status|save|restore`. UI shows a blue card on Settings with "Save/Overwrite master" and "Restore from master" buttons. Verified: corrupt a SKU → one-click restore → back to canonical (4.0 / 5.68). This is a permanent safety net independent of individual upload undo history.
+- Files touched: `/app/backend/routes/dashboard.py`, `/app/backend/routes/library.py`, `/app/backend/routes/uploads.py`, `/app/backend/routes/costs.py`, `/app/frontend/src/pages/Dashboard.jsx`, `/app/frontend/src/pages/LossMakers.jsx`, `/app/frontend/src/pages/Settings.jsx`, `/app/frontend/src/lib/i18n.jsx`.
 
 ## Next Tasks (P1)
 1. Suggested-new-price column on Loss Makers (auto target-margin compute).
