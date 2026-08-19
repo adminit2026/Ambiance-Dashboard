@@ -451,9 +451,12 @@ async def top_skus(
 
     Operational cost and per-marketplace commission are pulled from Settings
     and applied at the ORDER-LINE level. Production shipping is billed
-    per ORDER (not per unit); at the SKU level it is allocated proportionally
-    by quantity to the SKUs sharing an order, so the sum across SKUs of a
-    marketplace equals rate × distinct_orders (matches P&L totals exactly).
+    per ORDER (fixed per shipment). At the SKU level we attribute the FULL
+    per-order shipping cost to every SKU that participates in the order, so
+    each SKU's Ship column = distinct orders containing that SKU × rate[mk].
+    NOTE: sum across SKUs will exceed the marketplace P&L total when orders
+    contain multiple SKUs — this is expected. The P&L stays at rate × distinct
+    orders (the actual cash out).
     """
     match = build_match(date_from, date_to, parse_list(marketplaces), sku)
     constants = await get_cost_constants()
@@ -462,19 +465,10 @@ async def top_skus(
     mk_commission = constants["commission_by_marketplace"] or {}
     rates = await get_rates()
 
-    # Production shipping is billed per ORDER. For SKU-level allocation, split the
-    # per-order shipping cost proportionally by quantity across the SKUs in that order.
-    # This guarantees that sum of allocated shipping across SKUs of a marketplace
-    # equals rate[mk] × distinct_orders — matching the marketplace/P&L totals exactly.
-    order_totals_pipe = [
-        {"$match": match} if match else {"$match": {}},
-        {"$group": {"_id": {"oid": "$order_id", "mk": "$marketplace"}, "total_qty": {"$sum": "$quantity"}}},
-    ]
-    order_totals: Dict[tuple, int] = {}
-    async for r in db.orders.aggregate(order_totals_pipe):
-        order_totals[(r["_id"]["oid"], r["_id"]["mk"])] = int(r["total_qty"] or 0)
-
-    # Aggregate every deduction at the line level, then roll up to SKU.
+    # Production shipping is billed per ORDER. At the SKU level, we attribute
+    # the FULL per-order shipping cost to every SKU that appears in the order,
+    # so each SKU's Ship = distinct orders (containing this SKU) × rate[mk].
+    # This is what the user expects when auditing SKU-level margins.
     per_sku: Dict[str, dict] = {}
     async for o in db.orders.find(
         match,
@@ -489,10 +483,10 @@ async def top_skus(
             "product_name": o.get("product_name") or "",
             "units": 0,
             "orders": set(),
+            "orders_by_mk": {},  # {mk: set(order_ids)} — for per-order shipping billing
             "revenue": 0.0,
             "ship_income": 0.0,
             "operational": 0.0,
-            "prod_shipping": 0.0,
             "commission": 0.0,
         })
         qty = int(o.get("quantity") or 0)
@@ -501,16 +495,20 @@ async def top_skus(
         mk = o.get("marketplace") or ""
         d["units"] += qty
         d["orders"].add(o.get("order_id"))
+        d["orders_by_mk"].setdefault(mk, set()).add(o.get("order_id"))
         d["revenue"] += rev
         d["ship_income"] += ship
         d["operational"] += op_cost * qty
-        # Allocate per-order shipping proportionally by qty within the order
-        order_qty = order_totals.get((o.get("order_id"), mk), qty) or qty
-        if order_qty > 0:
-            d["prod_shipping"] += float(mk_shipping.get(mk, 0)) * (qty / order_qty)
         d["commission"] += float(mk_commission.get(mk, 0)) / 100.0 * rev
         if not d["product_name"] and o.get("product_name"):
             d["product_name"] = o.get("product_name")
+
+    # Per-order shipping cost: rate[mk] × distinct orders (containing this SKU) on mk
+    for d in per_sku.values():
+        d["prod_shipping"] = sum(
+            float(mk_shipping.get(mk, 0)) * len(order_ids)
+            for mk, order_ids in d["orders_by_mk"].items()
+        )
 
     skus_needed = list(per_sku.keys())
     costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find(

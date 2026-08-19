@@ -44,22 +44,16 @@ async def library_skus(
     user=Depends(get_current_user),
 ):
     """Return all SKUs with cost breakdown.
-    Production Shipping = per-order rate from Settings, allocated across SKUs
-    proportionally by quantity within each order, then averaged per unit.
+    Production Shipping = per-order rate × distinct orders (containing this SKU)
+    on each marketplace, then averaged per unit for display.
+    NOTE: sum across SKUs will exceed the marketplace P&L total for multi-SKU
+    orders — this is expected. P&L keeps the correct cash-out number.
     Commission = weighted avg commission % per marketplace, computed against revenue.
     """
     constants = await get_cost_constants()
     op_cost = float(constants["operational_cost_per_unit"])
     mk_shipping = constants["production_shipping_by_marketplace"] or {}
     mk_commission = constants["commission_by_marketplace"] or {}
-
-    # First pass: total qty per (order_id, marketplace) so we can split the
-    # per-order shipping cost proportionally across the SKUs in that order.
-    order_totals: Dict[tuple, int] = {}
-    async for r in db.orders.aggregate([
-        {"$group": {"_id": {"oid": "$order_id", "mk": "$marketplace"}, "total_qty": {"$sum": "$quantity"}}},
-    ]):
-        order_totals[(r["_id"]["oid"], r["_id"]["mk"])] = int(r["total_qty"] or 0)
 
     sku_data: Dict[str, dict] = {}
     async for o in db.orders.find({}, {"sku": 1, "marketplace": 1, "quantity": 1, "line_total_eur": 1, "product_name": 1, "order_id": 1}):
@@ -69,14 +63,18 @@ async def library_skus(
         mk = o.get("marketplace") or "Unknown"
         qty = int(o.get("quantity") or 0)
         rev = float(o.get("line_total_eur") or 0)
-        d = sku_data.setdefault(sku, {"product_name": o.get("product_name") or "", "units_total": 0, "revenue_total": 0.0, "prod_ship_alloc": 0.0, "commission_eur": 0.0})
+        d = sku_data.setdefault(sku, {
+            "product_name": o.get("product_name") or "",
+            "units_total": 0,
+            "revenue_total": 0.0,
+            "orders_by_mk": {},
+            "commission_eur": 0.0,
+        })
         if not d["product_name"] and o.get("product_name"):
             d["product_name"] = o.get("product_name")
         d["units_total"] += qty
         d["revenue_total"] += rev
-        order_qty = order_totals.get((o.get("order_id"), mk), qty) or qty
-        if order_qty > 0:
-            d["prod_ship_alloc"] += float(mk_shipping.get(mk, 0)) * (qty / order_qty)
+        d["orders_by_mk"].setdefault(mk, set()).add(o.get("order_id"))
         d["commission_eur"] += float(mk_commission.get(mk, 0)) / 100.0 * rev
 
     costs_map = {c["sku"]: c async for c in db.costs.find({}, {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1, "product_name": 1})}
@@ -93,9 +91,13 @@ async def library_skus(
         production_cost = float(c.get("cost_per_unit", 0)) if c else 0
         units_total = sd.get("units_total", 0)
         revenue_total = sd.get("revenue_total", 0.0)
-        prod_ship_alloc = sd.get("prod_ship_alloc", 0.0)
+        # Total per-order shipping billed to this SKU = sum over mk of rate × distinct orders
+        prod_ship_total = sum(
+            float(mk_shipping.get(mk, 0)) * len(order_ids)
+            for mk, order_ids in sd.get("orders_by_mk", {}).items()
+        )
         commission_eur = sd.get("commission_eur", 0.0)
-        prod_shipping = (prod_ship_alloc / units_total) if units_total > 0 else 0.0
+        prod_shipping = (prod_ship_total / units_total) if units_total > 0 else 0.0
         commission_pct_weighted = (commission_eur / revenue_total * 100.0) if revenue_total > 0 else 0.0
         product_name = sd.get("product_name") or c.get("product_name") or ""
         total = production_cost + op_cost + prod_shipping
@@ -133,9 +135,9 @@ async def loss_makers(
 ):
     """Return per-SKU per-marketplace combos where net profit/unit < 0.
 
-    Production shipping is billed PER ORDER; at the SKU×MK level we allocate
-    each order's shipping cost proportionally by quantity across the SKUs in
-    that order, then average per unit for this (sku, mk).
+    Production shipping is billed PER ORDER. At the SKU×MK level we bill the
+    FULL per-order shipping cost to every SKU appearing in the order, then
+    average per unit for this (sku, mk) row.
 
     Net/unit = avg_unit_price − (production_cost + operational_cost + prod_ship_per_unit + avg_price × commission[mk]/100)
     """
@@ -145,16 +147,7 @@ async def loss_makers(
     mk_shipping = constants["production_shipping_by_marketplace"] or {}
     mk_commission = constants["commission_by_marketplace"] or {}
 
-    # First pass: total qty per (order_id, marketplace) — for proportional split
-    order_totals_pipe = [
-        {"$match": match} if match else {"$match": {}},
-        {"$group": {"_id": {"oid": "$order_id", "mk": "$marketplace"}, "total_qty": {"$sum": "$quantity"}}},
-    ]
-    order_totals: Dict[tuple, int] = {}
-    async for r in db.orders.aggregate(order_totals_pipe):
-        order_totals[(r["_id"]["oid"], r["_id"]["mk"])] = int(r["total_qty"] or 0)
-
-    # Second pass: aggregate (sku, mk) — units, revenue, allocated shipping, orders
+    # Aggregate (sku, mk) — units, revenue, distinct orders (for per-order shipping)
     grouped: Dict[tuple, dict] = {}
     line_match = {**match, "unit_price": {"$gt": 0}}
     async for o in db.orders.find(line_match, {"sku": 1, "marketplace": 1, "quantity": 1, "line_total_eur": 1, "order_id": 1, "product_name": 1}):
@@ -165,13 +158,10 @@ async def loss_makers(
         qty = int(o.get("quantity") or 0)
         rev = float(o.get("line_total_eur") or 0)
         key = (sku, mk)
-        d = grouped.setdefault(key, {"sku": sku, "mk": mk, "product_name": o.get("product_name") or "", "units": 0, "revenue": 0.0, "prod_ship_alloc": 0.0, "orders": set()})
+        d = grouped.setdefault(key, {"sku": sku, "mk": mk, "product_name": o.get("product_name") or "", "units": 0, "revenue": 0.0, "orders": set()})
         d["units"] += qty
         d["revenue"] += rev
         d["orders"].add(o.get("order_id"))
-        order_qty = order_totals.get((o.get("order_id"), mk), qty) or qty
-        if order_qty > 0:
-            d["prod_ship_alloc"] += float(mk_shipping.get(mk, 0)) * (qty / order_qty)
         if not d["product_name"] and o.get("product_name"):
             d["product_name"] = o.get("product_name")
 
@@ -187,7 +177,9 @@ async def loss_makers(
         avg_price = revenue / units
         c = costs_map.get(sku, {})
         prod_cost = float(c.get("cost_per_unit", 0))
-        prod_ship_per_unit = d["prod_ship_alloc"] / units  # allocated per-order shipping, averaged per unit
+        # Per-order shipping billed to this SKU on this mk = rate × distinct orders / units
+        prod_ship_total = float(mk_shipping.get(mk, 0)) * len(d["orders"])
+        prod_ship_per_unit = prod_ship_total / units
         commission_per_unit = avg_price * float(mk_commission.get(mk, 0)) / 100.0
         total_cost_per_unit = prod_cost + op_cost + prod_ship_per_unit + commission_per_unit
         net_per_unit = avg_price - total_cost_per_unit
