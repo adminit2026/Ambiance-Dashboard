@@ -9,12 +9,16 @@ export default function LossMakers() {
   const { filters, setFilters, params } = useFilters();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [targetMargin, setTargetMargin] = useState(0);
 
   useEffect(() => {
     setLoading(true);
-    api.get("/library/loss-makers", { params }).then((r) => setRows(r.data)).finally(() => setLoading(false));
+    api
+      .get("/library/loss-makers", { params: { ...params, target_margin_pct: Number(targetMargin) || 0 } })
+      .then((r) => setRows(r.data))
+      .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(filters)]);
+  }, [JSON.stringify(filters), targetMargin]);
 
   const totalLoss = rows.reduce((acc, r) => acc + r.total_loss_eur, 0);
   const totalUnits = rows.reduce((acc, r) => acc + r.units, 0);
@@ -34,8 +38,25 @@ export default function LossMakers() {
               across <span className="font-mono-num">{fmtNum(rows.length)}</span> SKU × marketplace combos · <span className="font-mono-num">{fmtNum(totalUnits)}</span> units sold at a loss
             </div>
           </div>
-          <div className="text-right max-w-md text-xs text-[#5E636E]">
-            Net per unit = avg unit price − (production + operational + production shipping + commission). Only SKUs with cost data are evaluated.
+          <div className="flex flex-col items-end gap-2">
+            <label className="eyebrow" htmlFor="target-margin-input">Target margin %</label>
+            <div className="flex items-center gap-2">
+              <input
+                id="target-margin-input"
+                type="number"
+                step="1"
+                min="0"
+                max="90"
+                value={targetMargin}
+                onChange={(e) => setTargetMargin(e.target.value)}
+                className="in w-24 text-right"
+                data-testid="target-margin-input"
+              />
+              <span className="text-sm text-[#5E636E]">%</span>
+            </div>
+            <div className="text-[10px] text-[#5E636E] max-w-[220px] text-right leading-snug">
+              0% = break-even. Suggested price covers COGS, operational, per-order shipping and commission, plus this margin.
+            </div>
           </div>
         </div>
 
@@ -55,12 +76,14 @@ export default function LossMakers() {
                 <th className="text-right">Total Cost</th>
                 <th className="text-right">Net / unit</th>
                 <th className="text-right">Total Loss</th>
+                <th className="text-right border-l border-[#E5E7EB]">Suggested Price</th>
+                <th className="text-right">Uplift</th>
               </tr>
             </thead>
             <tbody>
-              {loading && (<tr><td colSpan={12} className="text-center py-12 text-[#5E636E]">Analyzing margins...</td></tr>)}
+              {loading && (<tr><td colSpan={14} className="text-center py-12 text-[#5E636E]">Analyzing margins...</td></tr>)}
               {!loading && rows.length === 0 && (
-                <tr><td colSpan={12} className="text-center py-12 text-[#00A859]">
+                <tr><td colSpan={14} className="text-center py-12 text-[#00A859]">
                   ✓ No loss-makers found! Every SKU with cost data is profitable in this date range.
                 </td></tr>
               )}
@@ -80,6 +103,12 @@ export default function LossMakers() {
                   <td className="text-right font-mono-num font-semibold">{fmtEurExact(r.total_cost_per_unit)}</td>
                   <td className="text-right font-mono-num text-[#FF2A2A] font-semibold">{fmtEurExact(r.net_per_unit)}</td>
                   <td className="text-right font-mono-num text-[#FF2A2A] font-bold">{fmtEur(r.total_loss_eur)}</td>
+                  <td className="text-right font-mono-num text-[#00A859] font-bold border-l border-[#E5E7EB]" data-testid={`suggested-price-${r.sku}`}>
+                    {r.suggested_price_eur > 0 ? fmtEurExact(r.suggested_price_eur) : "—"}
+                  </td>
+                  <td className="text-right font-mono-num text-[#00A859]">
+                    {r.suggested_price_eur > 0 ? `+${r.price_uplift_pct}%` : "—"}
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -131,6 +131,7 @@ async def loss_makers(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     marketplaces: Optional[str] = None,
+    target_margin_pct: float = 0.0,
     user=Depends(get_current_user),
 ):
     """Return per-SKU per-marketplace combos where net profit/unit < 0.
@@ -140,6 +141,11 @@ async def loss_makers(
     average per unit for this (sku, mk) row.
 
     Net/unit = avg_unit_price − (production_cost + operational_cost + prod_ship_per_unit + avg_price × commission[mk]/100)
+
+    Suggested price: solves for a new selling price P such that
+        P × (1 − commission_rate/100) − (production_cost + operational_cost + prod_ship_per_unit) ≥ P × target_margin_pct/100
+    → P = fixed_cost_per_unit / (1 − (commission_rate + target_margin_pct)/100)
+    where fixed_cost_per_unit = production + operational + prod_shipping (per unit).
     """
     match = build_match(date_from, date_to, parse_list(marketplaces), None)
     constants = await get_cost_constants()
@@ -185,6 +191,12 @@ async def loss_makers(
         net_per_unit = avg_price - total_cost_per_unit
         if net_per_unit < 0 and prod_cost > 0:
             total_loss = net_per_unit * units
+            # Suggested price: solve so remaining margin >= target_margin_pct of price
+            fixed_cost_per_unit = prod_cost + op_cost + prod_ship_per_unit
+            commission_rate = float(mk_commission.get(mk, 0))
+            denom = 1.0 - (commission_rate + target_margin_pct) / 100.0
+            suggested_price = (fixed_cost_per_unit / denom) if denom > 0 else 0.0
+            uplift_pct = ((suggested_price - avg_price) / avg_price * 100.0) if avg_price > 0 else 0.0
             out.append({
                 "sku": sku,
                 "marketplace": mk,
@@ -200,6 +212,8 @@ async def loss_makers(
                 "net_per_unit": round(net_per_unit, 2),
                 "total_loss_eur": round(total_loss, 2),
                 "revenue_eur": round(revenue, 2),
+                "suggested_price_eur": round(suggested_price, 2),
+                "price_uplift_pct": round(uplift_pct, 1),
             })
     out.sort(key=lambda x: x["total_loss_eur"])
     return out
