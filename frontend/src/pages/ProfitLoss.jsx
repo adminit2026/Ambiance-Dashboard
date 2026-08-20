@@ -51,15 +51,14 @@ export default function ProfitLoss() {
               <Row label={t("pnl.gross_revenue")} rows={rows} get={(r) => r.revenue_eur} totalVal={total.revenue} bold />
               <Row label={t("pnl.shipping_income")} rows={rows} get={(r) => (r.shipping_income_eur ?? r.shipping_eur ?? 0)} totalVal={total.shipping_income} />
               <Row label={t("pnl.total_revenue")} rows={rows} get={(r) => (r.total_revenue_eur ?? r.revenue_eur)} totalVal={total.total_revenue} bold />
+              <Row label={t("pnl.vat")} rows={rows} get={(r) => -(r.vat_eur || 0)} totalVal={-total.vat} muted />
               <Row label={t("pnl.cogs")} rows={rows} get={(r) => -r.cogs_eur} totalVal={-total.cogs} muted />
               <Row label={t("pnl.operational")} rows={rows} get={(r) => -(r.operational_eur || 0)} totalVal={-total.operational} muted />
               <Row label={t("pnl.prod_shipping")} rows={rows} get={(r) => -(r.production_shipping_eur || 0)} totalVal={-total.prod_shipping} muted />
               <Row label={t("pnl.commission")} rows={rows} get={(r) => -(r.commission_eur || 0)} totalVal={-total.commission} muted />
               <tr><td colSpan={rows.length + 2} style={{ background: "#F7F7F8", height: 4, padding: 0 }} /></tr>
-              <Row label={t("pnl.net_profit")} rows={rows} get={(r) => r.net_profit_eur} totalVal={total.net} bold accent />
-              <Row label={t("pnl.margin")} rows={rows} get={(r) => r.margin_pct} totalVal={total.total_revenue ? (total.net / total.total_revenue) * 100 : 0} pct />
-              <tr><td colSpan={rows.length + 2} style={{ background: "#F7F7F8", height: 4, padding: 0 }} /></tr>
-              <Row label={t("pnl.vat")} rows={rows} get={(r) => (r.vat_eur || 0)} totalVal={total.vat} muted />
+              <Row label={t("pnl.margin")} rows={rows} get={(r) => r.net_profit_eur} totalVal={total.net} bold accent />
+              <Row label={t("pnl.margin_pct")} rows={rows} get={(r) => r.margin_pct} totalVal={total.total_revenue ? (total.net / total.total_revenue) * 100 : 0} pct />
             </tbody>
           </table>
         </div>

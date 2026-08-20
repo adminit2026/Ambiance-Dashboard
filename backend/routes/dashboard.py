@@ -49,19 +49,26 @@ async def dashboard_summary(
     op_cost = float(constants["operational_cost_per_unit"])
     mk_shipping = constants["production_shipping_by_marketplace"] or {}
     mk_commission = constants["commission_by_marketplace"] or {}
+    mk_vat = constants["vat_rate_by_marketplace"] or {}
     skus_in_scope = await db.orders.distinct("sku", match)
     costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({"sku": {"$in": skus_in_scope}}, {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1})}
     cogs = 0.0
     operational_total = 0.0
     commission_total = 0.0
+    vat_total = 0.0
     async for o in db.orders.find(match, {"sku": 1, "quantity": 1, "marketplace": 1, "line_total_eur": 1}):
         qty = int(o.get("quantity") or 0)
         mk = o.get("marketplace", "")
+        line_rev = float(o.get("line_total_eur") or 0)
         c = costs_map.get(o.get("sku"))
         if c:
             cogs += to_eur((c["cost_per_unit"] + c.get("shipping_cost", 0)) * qty, c.get("currency", "EUR"), rates)
         operational_total += op_cost * qty
-        commission_total += float(o.get("line_total_eur") or 0) * float(mk_commission.get(mk, 0)) / 100.0
+        commission_total += line_rev * float(mk_commission.get(mk, 0)) / 100.0
+        # VAT ALWAYS from Settings (ignore whatever was in the uploaded file).
+        vat_rate = float(mk_vat.get(mk, 0))
+        if vat_rate > 0 and line_rev > 0:
+            vat_total += line_rev * vat_rate / (100.0 + vat_rate)
     # Production shipping is billed PER ORDER (not per unit). Count distinct orders per marketplace.
     orders_per_mk_pipe = [
         {"$match": match} if match else {"$match": {}},
@@ -75,7 +82,7 @@ async def dashboard_summary(
     )
     # Customer-paid shipping is income, not an expense — add it to revenue.
     total_revenue = revenue + shipping
-    total_costs = cogs + operational_total + prod_shipping_total + commission_total
+    total_costs = vat_total + cogs + operational_total + prod_shipping_total + commission_total
     margin = total_revenue - total_costs
     margin_pct = (margin / total_revenue * 100) if total_revenue else 0
     return {
@@ -87,6 +94,7 @@ async def dashboard_summary(
         "units": units,
         "lines": lines,
         "aov_eur": round(aov, 2),
+        "vat_eur": round(vat_total, 2),
         "cogs_eur": round(cogs, 2),
         "operational_eur": round(operational_total, 2),
         "production_shipping_eur": round(prod_shipping_total, 2),
@@ -637,6 +645,7 @@ async def profit_loss(
     op_cost = float(constants["operational_cost_per_unit"])
     mk_shipping = constants["production_shipping_by_marketplace"] or {}
     mk_commission = constants["commission_by_marketplace"] or {}
+    mk_vat = constants["vat_rate_by_marketplace"] or {}
     cogs_per_mk: Dict[str, float] = {}
     async for o in db.orders.find(match, {"sku": 1, "quantity": 1, "marketplace": 1, "currency": 1}):
         c = costs_map.get(o.get("sku"))
@@ -656,8 +665,13 @@ async def profit_loss(
         prod_ship = float(mk_shipping.get(mk, 0)) * orders_count
         # Commission is computed on gross revenue (line totals), not on shipping income
         commission_eur = float(mk_commission.get(mk, 0)) / 100.0 * rev
+        # VAT ALWAYS from Settings — ignore whatever the uploaded file contained.
+        # VAT is included in the TTC line total, so extract it: line × rate / (100 + rate).
+        vat_rate = float(mk_vat.get(mk, 0))
+        vat_eur = (rev * vat_rate / (100.0 + vat_rate)) if vat_rate > 0 else 0.0
         total_revenue = rev + ship_income
-        net = total_revenue - cogs - op_total - prod_ship - commission_eur
+        # Margin = Total Revenue − VAT − COGS − Operational − Production Shipping − Commission
+        net = total_revenue - vat_eur - cogs - op_total - prod_ship - commission_eur
         out.append({
             "marketplace": mk,
             "revenue_eur": round(rev, 2),
@@ -669,7 +683,8 @@ async def profit_loss(
             "production_shipping_eur": round(prod_ship, 2),
             "commission_eur": round(commission_eur, 2),
             "commission_pct": float(mk_commission.get(mk, 0)),
-            "vat_eur": round(float(r["vat"] or 0), 2),
+            "vat_eur": round(vat_eur, 2),
+            "vat_pct": vat_rate,
             "net_profit_eur": round(net, 2),
             "margin_pct": round((net / total_revenue * 100) if total_revenue else 0, 2),
             "units": units,
