@@ -24,9 +24,10 @@ export default function ProfitLoss() {
       operational: acc.operational + (r.operational_eur || 0),
       prod_shipping: acc.prod_shipping + (r.production_shipping_eur || 0),
       commission: acc.commission + (r.commission_eur || 0),
+      vat: acc.vat + (r.vat_eur || 0),
       net: acc.net + r.net_profit_eur,
     }),
-    { revenue: 0, shipping_income: 0, total_revenue: 0, cogs: 0, operational: 0, prod_shipping: 0, commission: 0, net: 0 }
+    { revenue: 0, shipping_income: 0, total_revenue: 0, cogs: 0, operational: 0, prod_shipping: 0, commission: 0, vat: 0, net: 0 }
   );
 
   return (
@@ -57,6 +58,8 @@ export default function ProfitLoss() {
               <tr><td colSpan={rows.length + 2} style={{ background: "#F7F7F8", height: 4, padding: 0 }} /></tr>
               <Row label={t("pnl.net_profit")} rows={rows} get={(r) => r.net_profit_eur} totalVal={total.net} bold accent />
               <Row label={t("pnl.margin")} rows={rows} get={(r) => r.margin_pct} totalVal={total.total_revenue ? (total.net / total.total_revenue) * 100 : 0} pct />
+              <tr><td colSpan={rows.length + 2} style={{ background: "#F7F7F8", height: 4, padding: 0 }} /></tr>
+              <Row label={t("pnl.vat")} rows={rows} get={(r) => (r.vat_eur || 0)} totalVal={total.vat} muted />
             </tbody>
           </table>
         </div>
