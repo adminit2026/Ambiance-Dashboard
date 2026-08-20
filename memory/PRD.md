@@ -58,15 +58,14 @@ CDiscount, Maison, Leroy Merlin, Mano Mano (was MONECHELLE), PinkConnect Veepee 
 - Iter 9 verification: 21/21 backend pytest + full UI walk pass; 0 console errors.
 
 ### Iteration 6 (2026-02 fork)
-- **Production Shipping billed PER ORDER** — Backend counts distinct orders per marketplace × rate for Dashboard summary and P&L. SKU-level views bill full per-order shipping to every SKU appearing in the order.
-- **Dashboard Top 20 SKUs (2 side-by-side cards)** — "by Turnover" + "by Units Sold". Backend: `GET /api/dashboard/top-skus?sort_by=units|revenue`.
-- **Loss Makers Suggested Price** — "Suggested Price" + "Uplift %" columns with Target margin % input.
-- **Bulk Cost Upload on Settings** — CSV/XLSX drop-in + Download template link. Handles the 30k-row canonical `Sheet3` format.
-- **Undo Last Cost Upload** — snapshot-based restore.
-- **Master Price List (canonical snapshot)** — `costs_master` collection, `GET/POST /api/costs/master/status|save|restore`, UI card with Save/Restore buttons.
-- **VAT audit + auto-derive** — new `vat_rate_by_marketplace` in cost-constants (persisted via existing PUT endpoint). Upload handler back-computes VAT for lines returned with 0: `vat = line_total_eur × rate/(100+rate)` when rate configured. Existing ChannelEngine/Beezup VAT values are preserved. Amazon Vendor left at 0 (B2B reverse-charge — leave rate blank/0 in Settings). UI: new "VAT rate % by marketplace" matrix in Settings with per-country inputs.
-- **Danger zone: Erase all sales data** — new `DELETE /api/admin/orders/all?confirm=ERASE` — wipes `orders` and non-cost `uploads`. Preserves costs, master, mappings, settings. UI in Settings with red card and double-confirm (dialog + typed "ERASE").
-- Files touched: `/app/backend/core.py` (CostConstantsUpdate + get_cost_constants), `/app/backend/routes/costs.py` (PUT includes vat + erase-all endpoint), `/app/backend/routes/uploads.py` (VAT auto-derive on upload), `/app/frontend/src/pages/Settings.jsx` (VAT matrix + Danger zone).
+- **Multi-user auth with role-based Settings access** — Login page's "Demo credentials" block removed. Startup seed now idempotently creates:
+  - `amazon.marketplace@ambiance-sticker.com` / `Stickers2026!` (role=admin — full access)
+  - `info@ambiance-sticker.com` / `Ambiance2026!` (role=user — no Settings)
+  Legacy `admin@ambiancesticker.com` auto-deleted from DB on startup. Frontend hides Settings from nav for non-admins AND route-guards `/settings` (redirects to `/dashboard` if role≠admin). Backend already enforced `require_admin` on mutations (returns 403). Verified: admin/user login, legacy 401, non-admin PUT cost-constants → 403, non-admin GET /settings → redirect to dashboard.
+- **Danger zone erase — POST fallback route** — added `POST /api/admin/orders/erase-all` alongside DELETE (proxy compatibility). Frontend uses POST + params + 120s timeout + verbose error logging.
+- **VAT rate % by marketplace** — new `vat_rate_by_marketplace` dict in cost-constants (settings). Upload handler back-computes VAT `= line_total_eur × rate/(100+rate)` for lines returned with vat=0.
+- **Master Price List / Bulk Cost Upload / Undo Last Cost / Loss Makers Suggested Price / Top-20 Bestsellers / Per-order shipping** — all shipped earlier this iteration (see previous entries).
+- Files touched: `/app/backend/server.py` (seed 2 users + drop legacy), `/app/backend/routes/costs.py` (POST erase-all), `/app/frontend/src/App.js` (AdminOnly route guard), `/app/frontend/src/components/Layout.jsx` (hide Settings for user role), `/app/frontend/src/pages/Login.jsx` (remove demo credentials), `/app/frontend/src/pages/Settings.jsx` (VAT matrix + Danger zone + POST erase).
 
 ## Next Tasks (P1)
 1. Suggested-new-price column on Loss Makers (auto target-margin compute).

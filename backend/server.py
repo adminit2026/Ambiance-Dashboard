@@ -12,7 +12,6 @@ from starlette.middleware.cors import CORSMiddleware
 
 from core import (
     db, client, logger,
-    ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME,
     hash_password, verify_password,
     get_rates, channel_to_marketplace, refine_marketplace,
 )
@@ -59,20 +58,45 @@ async def on_startup():
     await db.asin_mappings.create_index("asin", unique=True)
     await db.sku_mappings.create_index([("marketplace", 1), ("external_id", 1)], unique=True)
 
-    # seed admin
-    existing = await db.users.find_one({"email": ADMIN_EMAIL})
-    if existing is None:
-        await db.users.insert_one({
-            "email": ADMIN_EMAIL,
-            "password_hash": hash_password(ADMIN_PASSWORD),
-            "name": ADMIN_NAME,
+    # seed users — idempotent. If a user exists, only refresh its password hash / role
+    # (never overwrite email or created_at). Delete legacy demo user if present.
+    users_to_seed = [
+        {
+            "email": "amazon.marketplace@ambiance-sticker.com",
+            "password": "Stickers2026!",
+            "name": "Amazon Marketplace",
             "role": "admin",
-            "created_at": datetime.now(timezone.utc),
-        })
-        logger.info("Seeded admin user: %s", ADMIN_EMAIL)
-    elif not verify_password(ADMIN_PASSWORD, existing["password_hash"]):
-        await db.users.update_one({"email": ADMIN_EMAIL}, {"$set": {"password_hash": hash_password(ADMIN_PASSWORD)}})
-        logger.info("Updated admin password to match .env")
+        },
+        {
+            "email": "info@ambiance-sticker.com",
+            "password": "Ambiance2026!",
+            "name": "Ambiance Team",
+            "role": "user",
+        },
+    ]
+    for u in users_to_seed:
+        existing = await db.users.find_one({"email": u["email"]})
+        if existing is None:
+            await db.users.insert_one({
+                "email": u["email"],
+                "password_hash": hash_password(u["password"]),
+                "name": u["name"],
+                "role": u["role"],
+                "created_at": datetime.now(timezone.utc),
+            })
+            logger.info("Seeded user: %s (%s)", u["email"], u["role"])
+        else:
+            updates = {"role": u["role"], "name": u["name"]}
+            if not verify_password(u["password"], existing.get("password_hash", "")):
+                updates["password_hash"] = hash_password(u["password"])
+            await db.users.update_one({"email": u["email"]}, {"$set": updates})
+    # remove legacy demo admin if it exists and isn't one of the new users
+    legacy = ["admin@ambiancesticker.com"]
+    for e in legacy:
+        if e not in {u["email"] for u in users_to_seed}:
+            r = await db.users.delete_one({"email": e})
+            if r.deleted_count:
+                logger.info("Removed legacy user: %s", e)
 
     await get_rates()
 

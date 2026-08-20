@@ -27,6 +27,14 @@ function Protected({ children }) {
   return children;
 }
 
+function AdminOnly({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role !== "admin") return <Navigate to="/dashboard" replace />;
+  return children;
+}
+
 function App() {
   return (
     <I18nProvider>
@@ -57,7 +65,7 @@ function App() {
               <Route path="orders" element={<Orders />} />
               <Route path="heatmap" element={<HeatMap />} />
               <Route path="uploads" element={<Uploads />} />
-              <Route path="settings" element={<Settings />} />
+              <Route path="settings" element={<AdminOnly><Settings /></AdminOnly>} />
             </Route>
           </Routes>
         </BrowserRouter>

@@ -34,7 +34,7 @@ const NAV = [
   { to: "/orders", key: "nav.orders", icon: Table2, id: "nav-orders" },
   { to: "/heatmap", key: "nav.heatmap", icon: Flame, id: "nav-heat-map" },
   { to: "/uploads", key: "nav.uploads", icon: UploadCloud, id: "nav-uploads" },
-  { to: "/settings", key: "nav.settings", icon: SettingsIcon, id: "nav-settings" },
+  { to: "/settings", key: "nav.settings", icon: SettingsIcon, id: "nav-settings", adminOnly: true },
 ];
 
 export default function Layout() {
@@ -56,7 +56,7 @@ export default function Layout() {
           <div className="eyebrow mt-2" style={{ color: "#7C8090" }}>{t("app.tagline")}</div>
         </div>
         <nav className="flex-1 py-4 overflow-y-auto">
-          {NAV.map((n) => (
+          {NAV.filter((n) => !n.adminOnly || user?.role === "admin").map((n) => (
             <NavLink
               key={n.to}
               to={n.to}
