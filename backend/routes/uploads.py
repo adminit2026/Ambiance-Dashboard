@@ -14,7 +14,7 @@ from core import (
     detect_source, parse_channelengine, parse_beezup, parse_amazon_po,
     parse_amazon_edit_line_items, parse_ambiance_web,
     apply_asin_mapping, parse_asin_mapping, parse_cost_file,
-    get_rates, to_eur, remap_amazon_orders,
+    get_rates, to_eur, remap_amazon_orders, get_cost_constants,
 )
 
 router = APIRouter()
@@ -69,6 +69,12 @@ async def upload_orders(file: UploadFile = File(...), source: str = Form("auto")
         raise HTTPException(status_code=400, detail=f"Failed to parse file: {e}")
 
     rates = await get_rates()
+    # VAT auto-detect: if the parser returned vat=0 for a line, back-compute VAT
+    # from line_total × rate/(1+rate) using the per-marketplace VAT rate from Settings.
+    # This works because parsers return TTC (VAT-inclusive) line totals for retail sources.
+    # Amazon Vendor (B2B reverse-charge) intentionally has no VAT rate configured.
+    constants = await get_cost_constants()
+    vat_rates = constants.get("vat_rate_by_marketplace") or {}
     inserted, updated = 0, 0
     inserted_keys: List[str] = []
     for r in rows:
@@ -80,6 +86,13 @@ async def upload_orders(file: UploadFile = File(...), source: str = Form("auto")
             r["window_start_date_iso"] = r["window_start_date"].isoformat()
         r["line_total_eur"] = to_eur(r["line_total"], r["currency"], rates)
         r["shipping_cost_eur"] = to_eur(r["shipping_cost"], r["currency"], rates)
+        # VAT auto-derive when missing
+        if not r.get("vat"):
+            mk = r.get("marketplace") or ""
+            rate = float(vat_rates.get(mk) or 0)
+            if rate > 0 and r["line_total_eur"] > 0:
+                r["vat"] = round(r["line_total_eur"] * rate / (100.0 + rate), 2)
+                r["vat_derived"] = True
         res = await db.orders.update_one(
             {"line_key": r["line_key"]},
             {"$set": r, "$setOnInsert": {"created_at": datetime.now(timezone.utc).isoformat()}},

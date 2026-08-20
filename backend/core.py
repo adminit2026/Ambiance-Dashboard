@@ -109,6 +109,7 @@ class CostConstantsUpdate(BaseModel):
     operational_cost_per_unit: float
     production_shipping_by_marketplace: Dict[str, float]
     commission_by_marketplace: Dict[str, float] = {}
+    vat_rate_by_marketplace: Dict[str, float] = {}
 
 
 # ------------------- UTILITIES -------------------
@@ -360,13 +361,14 @@ async def get_rates() -> Dict[str, float]:
 async def get_cost_constants() -> Dict[str, Any]:
     doc = await db.settings.find_one({"_id": "cost_constants"})
     if not doc:
-        defaults = {"operational_cost_per_unit": 0.5, "production_shipping_by_marketplace": {}, "commission_by_marketplace": {}}
+        defaults = {"operational_cost_per_unit": 0.5, "production_shipping_by_marketplace": {}, "commission_by_marketplace": {}, "vat_rate_by_marketplace": {}}
         await db.settings.update_one({"_id": "cost_constants"}, {"$set": defaults}, upsert=True)
         return defaults
     return {
         "operational_cost_per_unit": float(doc.get("operational_cost_per_unit", 0.5)),
         "production_shipping_by_marketplace": doc.get("production_shipping_by_marketplace", {}),
         "commission_by_marketplace": doc.get("commission_by_marketplace", {}),
+        "vat_rate_by_marketplace": doc.get("vat_rate_by_marketplace", {}),
     }
 
 

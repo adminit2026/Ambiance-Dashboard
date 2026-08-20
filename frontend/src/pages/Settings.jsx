@@ -4,7 +4,7 @@ import api, { formatApiError } from "@/lib/api";
 import { toast } from "sonner";
 import { fmtDate } from "@/lib/format";
 import { useT } from "@/lib/i18n";
-import { Trash2, UploadCloud, Loader2, Undo2, Shield, ShieldCheck } from "lucide-react";
+import { Trash2, UploadCloud, Loader2, Undo2, Shield, ShieldCheck, AlertTriangle } from "lucide-react";
 
 export default function Settings() {
   const { t } = useT();
@@ -14,7 +14,7 @@ export default function Settings() {
   const [busy, setBusy] = useState(false);
   const [manual, setManual] = useState({ sku: "", cost_per_unit: "", shipping_cost: "", currency: "EUR" });
   const [marketplaces, setMarketplaces] = useState([]);
-  const [constants, setConstants] = useState({ operational_cost_per_unit: 0.5, production_shipping_by_marketplace: {}, commission_by_marketplace: {} });
+  const [constants, setConstants] = useState({ operational_cost_per_unit: 0.5, production_shipping_by_marketplace: {}, commission_by_marketplace: {}, vat_rate_by_marketplace: {} });
   const bulkInputRef = useRef(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [lastCostUpload, setLastCostUpload] = useState(null);
@@ -33,6 +33,7 @@ export default function Settings() {
     operational_cost_per_unit: r.data.operational_cost_per_unit ?? 0.5,
     production_shipping_by_marketplace: r.data.production_shipping_by_marketplace || {},
     commission_by_marketplace: r.data.commission_by_marketplace || {},
+    vat_rate_by_marketplace: r.data.vat_rate_by_marketplace || {},
   }));
 
   useEffect(() => { loadRates(); loadCosts(); loadMks(); loadConstants(); loadLastCostUpload(); loadMaster(); }, []);
@@ -67,10 +68,16 @@ export default function Settings() {
         const n = Number(v);
         if (!isNaN(n) && n >= 0) comm[k] = n;
       });
+      const vat = {};
+      Object.entries(constants.vat_rate_by_marketplace || {}).forEach(([k, v]) => {
+        const n = Number(v);
+        if (!isNaN(n) && n >= 0) vat[k] = n;
+      });
       const { data } = await api.put("/cost-constants", {
         operational_cost_per_unit: op,
         production_shipping_by_marketplace: ship,
         commission_by_marketplace: comm,
+        vat_rate_by_marketplace: vat,
       });
       setConstants(data);
       toast.success("Cost constants saved");
@@ -170,6 +177,25 @@ export default function Settings() {
     } finally { setBulkBusy(false); }
   };
 
+  const eraseAllSales = async () => {
+    const step1 = window.confirm(
+      "⚠️ ERASE ALL SALES DATA?\n\n" +
+      "This will delete EVERY order line and EVERY sales upload from the database.\n\n" +
+      "Kept intact: costs catalog, master price list, cost uploads, marketplaces, settings, VAT rates, commissions, users.\n\n" +
+      "Are you sure?"
+    );
+    if (!step1) return;
+    const step2 = window.prompt('Type "ERASE" (all caps) to confirm this destructive action:');
+    if (step2 !== "ERASE") { toast.info("Cancelled — nothing was deleted"); return; }
+    setBusy(true);
+    try {
+      const { data } = await api.delete("/admin/orders/all?confirm=ERASE");
+      toast.success(`Erased — ${data.orders_deleted} orders + ${data.order_uploads_deleted} upload records deleted. Ready for a fresh upload.`);
+    } catch (e) {
+      toast.error(formatApiError(e.response?.data?.detail) || "Erase failed");
+    } finally { setBusy(false); }
+  };
+
   const renormalize = async () => {
     setBusy(true);
     try {
@@ -254,6 +280,32 @@ export default function Settings() {
                   data-testid={`commission-${mk}`}
                 />
                 <span className="text-xs text-[#5E636E]">% of revenue</span>
+              </div>
+            ))}
+          </div>
+
+          <label className="eyebrow block mb-2 mt-6">VAT rate % by marketplace</label>
+          <div className="text-xs text-[#5E636E] mb-2">Used to back-compute VAT for uploaded files that don&apos;t have a VAT column (e.g. Ambiance Web, CDiscount). Files that already ship VAT (Beezup LM, ChannelEngine) will keep those values.</div>
+          <div className="space-y-2 max-h-[220px] overflow-y-auto" data-testid="vat-list">
+            {marketplaces.map((mk) => (
+              <div key={mk} className="flex items-center gap-3">
+                <div className="w-44 text-sm">{mk}</div>
+                <input
+                  type="number"
+                  step="0.1"
+                  className="in w-32"
+                  placeholder="0.0"
+                  value={constants.vat_rate_by_marketplace[mk] ?? ""}
+                  onChange={(e) => setConstants({
+                    ...constants,
+                    vat_rate_by_marketplace: {
+                      ...constants.vat_rate_by_marketplace,
+                      [mk]: e.target.value,
+                    },
+                  })}
+                  data-testid={`vat-${mk}`}
+                />
+                <span className="text-xs text-[#5E636E]">% VAT (e.g. 20 for France)</span>
               </div>
             ))}
           </div>
@@ -456,6 +508,28 @@ export default function Settings() {
               {costs.length > 200 && <div className="text-xs text-[#5E636E] mt-3">Showing 200 of {costs.length} SKUs. Use Library for full view.</div>}
             </div>
           )}
+        </div>
+
+        <div className="surface p-6 mt-6 border-2 border-[#FFCFCF]" data-testid="danger-zone">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="text-[#FF2A2A] shrink-0 mt-1" size={28} strokeWidth={1.5} />
+            <div className="flex-1">
+              <div className="eyebrow text-[#FF2A2A]">Danger zone</div>
+              <h3 className="font-display text-xl font-semibold mt-1">Erase all sales data</h3>
+              <p className="text-sm text-[#5E636E] mt-2 max-w-2xl">
+                Deletes every order line and every sales upload record so you can re-upload from scratch. Your <strong>costs catalog</strong>, <strong>master price list</strong>, marketplaces, VAT rates, commissions, and Settings are <strong>NOT</strong> affected.
+              </p>
+              <button
+                type="button"
+                onClick={eraseAllSales}
+                disabled={busy}
+                className="mt-4 px-4 py-2 rounded-lg text-sm font-semibold bg-[#FF2A2A] text-white hover:bg-[#D91F1F] disabled:opacity-50 transition-colors"
+                data-testid="erase-all-sales-btn"
+              >
+                Erase all sales data
+              </button>
+            </div>
+          </div>
         </div>
       </section>
     </div>

@@ -113,9 +113,30 @@ async def update_cost_constants(payload: CostConstantsUpdate, user=Depends(requi
         "commission_by_marketplace": {
             k: float(v) for k, v in (payload.commission_by_marketplace or {}).items()
         },
+        "vat_rate_by_marketplace": {
+            k: float(v) for k, v in (payload.vat_rate_by_marketplace or {}).items()
+        },
     }
     await db.settings.update_one({"_id": "cost_constants"}, {"$set": doc}, upsert=True)
     return doc
+
+
+# ------------------- Danger zone: erase all sales data -------------------
+@router.delete("/admin/orders/all")
+async def erase_all_orders(confirm: str = "", user=Depends(require_admin)):
+    """Erase every order + order-upload history. Keeps costs, mappings, settings, and users intact.
+    Requires ?confirm=ERASE to protect against accidental calls.
+    """
+    from fastapi import HTTPException
+    if confirm != "ERASE":
+        raise HTTPException(status_code=400, detail="Pass ?confirm=ERASE to authorize this destructive action")
+    orders_res = await db.orders.delete_many({})
+    # Only remove order-source uploads; keep cost upload history (needed for cost undo)
+    uploads_res = await db.uploads.delete_many({"target_collection": {"$ne": "costs"}})
+    return {
+        "orders_deleted": orders_res.deleted_count,
+        "order_uploads_deleted": uploads_res.deleted_count,
+    }
 
 
 # ------------------- Admin operations -------------------
