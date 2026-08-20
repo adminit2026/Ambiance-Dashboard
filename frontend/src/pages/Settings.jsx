@@ -201,6 +201,33 @@ export default function Settings() {
     } finally { setBusy(false); }
   };
 
+  const eraseAllCosts = async () => {
+    const step1 = window.confirm(
+      "⚠️ ERASE ALL COST / PRODUCTION SHIPPING DATA?\n\n" +
+      "This will delete every SKU cost, production cost and shipping cost, plus every cost upload record.\n\n" +
+      "Kept intact: sales orders, master price list, marketplaces, VAT, commissions, users.\n" +
+      "Tip: if you just want to roll back to your saved master, use Restore from master instead.\n\n" +
+      "Are you sure?"
+    );
+    if (!step1) return;
+    const step2 = window.prompt('Type "ERASE" (all caps) to confirm this destructive action:');
+    if (step2 !== "ERASE") { toast.info("Cancelled — nothing was deleted"); return; }
+    setBusy(true);
+    try {
+      const { data } = await api.post("/admin/costs/erase-all", null, { params: { confirm: "ERASE" }, timeout: 120000 });
+      toast.success(`Erased — ${data.costs_deleted} costs + ${data.cost_uploads_deleted} upload records deleted. Ready for a fresh cost upload.`);
+      loadCosts();
+      loadLastCostUpload();
+    } catch (e) {
+      console.error("[erase-all-costs]", e);
+      const status = e?.response?.status;
+      const detail = e?.response?.data?.detail;
+      const msg = detail ? formatApiError(detail) : (status ? `HTTP ${status} — ${e?.message || "no detail"}` : (e?.message || "Erase failed — check network"));
+      toast.error(`Erase failed: ${msg}`);
+    } finally { setBusy(false); }
+  };
+
+
   const renormalize = async () => {
     setBusy(true);
     try {
@@ -532,6 +559,15 @@ export default function Settings() {
                 data-testid="erase-all-sales-btn"
               >
                 Erase all sales data
+              </button>
+              <button
+                type="button"
+                onClick={eraseAllCosts}
+                disabled={busy}
+                className="mt-4 ml-3 px-4 py-2 rounded-lg text-sm font-semibold border-2 border-[#FF2A2A] text-[#FF2A2A] bg-white hover:bg-[#FFF3F3] disabled:opacity-50 transition-colors"
+                data-testid="erase-all-costs-btn"
+              >
+                Erase all cost / production shipping data
               </button>
             </div>
           </div>

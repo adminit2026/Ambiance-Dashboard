@@ -76,6 +76,12 @@ export default function Login() {
               {busy && <Loader2 size={14} className="animate-spin" />} Sign in
             </button>
           </form>
+
+          <div className="mt-8 text-xs text-[#5E636E] border-t border-[#E5E7EB] pt-4">
+            <div className="eyebrow mb-2">Demo credentials</div>
+            <div className="font-mono-num">info@ambiance-sticker.com</div>
+            <div className="font-mono-num">Ambiance2026!</div>
+          </div>
         </div>
         <div className="text-xs text-[#5E636E]">© Ambiance Sticker · Multi-marketplace analytics</div>
       </div>

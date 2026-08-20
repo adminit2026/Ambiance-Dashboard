@@ -141,6 +141,24 @@ async def erase_all_orders(confirm: str = "", user=Depends(require_admin)):
     }
 
 
+@router.post("/admin/costs/erase-all")
+async def erase_all_costs(confirm: str = "", user=Depends(require_admin)):
+    """Erase every cost (production cost + shipping) and every cost upload record.
+    Preserves the Master Price List (costs_master) as a safety net — use Restore
+    from Master afterwards if you want to fall back instead of re-uploading.
+    Requires confirm=ERASE.
+    """
+    from fastapi import HTTPException
+    if confirm != "ERASE":
+        raise HTTPException(status_code=400, detail="Pass confirm=ERASE to authorize this destructive action")
+    costs_res = await db.costs.delete_many({})
+    uploads_res = await db.uploads.delete_many({"target_collection": "costs"})
+    return {
+        "costs_deleted": costs_res.deleted_count,
+        "cost_uploads_deleted": uploads_res.deleted_count,
+    }
+
+
 # ------------------- Admin operations -------------------
 @router.post("/admin/reprocess-amazon-asins")
 async def reprocess_amazon_asins(user=Depends(require_admin)):
