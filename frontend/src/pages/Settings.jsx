@@ -189,10 +189,15 @@ export default function Settings() {
     if (step2 !== "ERASE") { toast.info("Cancelled — nothing was deleted"); return; }
     setBusy(true);
     try {
-      const { data } = await api.delete("/admin/orders/all?confirm=ERASE");
+      const { data } = await api.post("/admin/orders/erase-all", null, { params: { confirm: "ERASE" }, timeout: 120000 });
       toast.success(`Erased — ${data.orders_deleted} orders + ${data.order_uploads_deleted} upload records deleted. Ready for a fresh upload.`);
     } catch (e) {
-      toast.error(formatApiError(e.response?.data?.detail) || "Erase failed");
+      // Surface as much detail as possible — helps when the toast defaults to "Something went wrong."
+      console.error("[erase-all-sales]", e);
+      const status = e?.response?.status;
+      const detail = e?.response?.data?.detail;
+      const msg = detail ? formatApiError(detail) : (status ? `HTTP ${status} — ${e?.message || "no detail"}` : (e?.message || "Erase failed — check network"));
+      toast.error(`Erase failed: ${msg}`);
     } finally { setBusy(false); }
   };
 

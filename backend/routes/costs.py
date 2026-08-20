@@ -122,14 +122,16 @@ async def update_cost_constants(payload: CostConstantsUpdate, user=Depends(requi
 
 
 # ------------------- Danger zone: erase all sales data -------------------
+@router.post("/admin/orders/erase-all")
 @router.delete("/admin/orders/all")
 async def erase_all_orders(confirm: str = "", user=Depends(require_admin)):
     """Erase every order + order-upload history. Keeps costs, mappings, settings, and users intact.
-    Requires ?confirm=ERASE to protect against accidental calls.
+    Requires ?confirm=ERASE (or JSON body {"confirm": "ERASE"}) to protect against accidental calls.
+    Exposed as both POST /admin/orders/erase-all and DELETE /admin/orders/all for proxy compatibility.
     """
     from fastapi import HTTPException
     if confirm != "ERASE":
-        raise HTTPException(status_code=400, detail="Pass ?confirm=ERASE to authorize this destructive action")
+        raise HTTPException(status_code=400, detail="Pass confirm=ERASE to authorize this destructive action")
     orders_res = await db.orders.delete_many({})
     # Only remove order-source uploads; keep cost upload history (needed for cost undo)
     uploads_res = await db.uploads.delete_many({"target_collection": {"$ne": "costs"}})
