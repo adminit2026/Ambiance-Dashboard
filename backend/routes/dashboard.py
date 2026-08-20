@@ -55,7 +55,6 @@ async def dashboard_summary(
     cogs = 0.0
     operational_total = 0.0
     commission_total = 0.0
-    vat_total = 0.0
     async for o in db.orders.find(match, {"sku": 1, "quantity": 1, "marketplace": 1, "line_total_eur": 1}):
         qty = int(o.get("quantity") or 0)
         mk = o.get("marketplace", "")
@@ -65,10 +64,21 @@ async def dashboard_summary(
             cogs += to_eur((c["cost_per_unit"] + c.get("shipping_cost", 0)) * qty, c.get("currency", "EUR"), rates)
         operational_total += op_cost * qty
         commission_total += line_rev * float(mk_commission.get(mk, 0)) / 100.0
-        # VAT ALWAYS from Settings (ignore whatever was in the uploaded file).
-        vat_rate = float(mk_vat.get(mk, 0))
-        if vat_rate > 0 and line_rev > 0:
-            vat_total += line_rev * vat_rate / (100.0 + vat_rate)
+    # VAT = flat percentage of Total Revenue (rev + shipping income) per marketplace,
+    # ALWAYS from Settings (ignore file values). Formula: total_rev_mk × rate / 100.
+    vat_pipe = [
+        {"$match": match} if match else {"$match": {}},
+        {"$group": {"_id": "$marketplace",
+                    "rev": {"$sum": "$line_total_eur"},
+                    "ship": {"$sum": "$shipping_cost_eur"}}},
+    ]
+    vat_total = 0.0
+    async for row in db.orders.aggregate(vat_pipe):
+        mk = row["_id"] or ""
+        rate = float(mk_vat.get(mk, 0))
+        if rate > 0:
+            total_rev_mk = float(row.get("rev") or 0) + float(row.get("ship") or 0)
+            vat_total += total_rev_mk * rate / 100.0
     # Production shipping is billed PER ORDER (not per unit). Count distinct orders per marketplace.
     orders_per_mk_pipe = [
         {"$match": match} if match else {"$match": {}},
@@ -665,11 +675,11 @@ async def profit_loss(
         prod_ship = float(mk_shipping.get(mk, 0)) * orders_count
         # Commission is computed on gross revenue (line totals), not on shipping income
         commission_eur = float(mk_commission.get(mk, 0)) / 100.0 * rev
-        # VAT ALWAYS from Settings — ignore whatever the uploaded file contained.
-        # VAT is included in the TTC line total, so extract it: line × rate / (100 + rate).
+        # VAT ALWAYS from Settings — flat percentage of Total Revenue
+        # (Gross Revenue + Customer Shipping), per user's business rule.
         vat_rate = float(mk_vat.get(mk, 0))
-        vat_eur = (rev * vat_rate / (100.0 + vat_rate)) if vat_rate > 0 else 0.0
         total_revenue = rev + ship_income
+        vat_eur = total_revenue * vat_rate / 100.0
         # Margin = Total Revenue − VAT − COGS − Operational − Production Shipping − Commission
         net = total_revenue - vat_eur - cogs - op_total - prod_ship - commission_eur
         out.append({
