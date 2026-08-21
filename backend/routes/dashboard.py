@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 
 from core import (
     db, get_current_user, build_match, parse_list,
-    get_rates, get_cost_constants, to_eur,
+    get_rates, get_cost_constants, to_eur, resolve_cost,
     rollup_marketplace,
 )
 
@@ -52,7 +52,8 @@ async def dashboard_summary(
     mk_commission = constants["commission_by_marketplace"] or {}
     mk_vat = constants["vat_rate_by_marketplace"] or {}
     skus_in_scope = await db.orders.distinct("sku", match)
-    costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({"sku": {"$in": skus_in_scope}}, {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1})}
+    # Load ALL cost rows so resolve_cost() can prefix-fallback from variant → group.
+    costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({}, {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1})}
     cogs = 0.0
     operational_total = 0.0
     commission_total = 0.0
@@ -60,7 +61,7 @@ async def dashboard_summary(
         qty = int(o.get("quantity") or 0)
         mk = o.get("marketplace", "")
         line_rev = float(o.get("line_total_eur") or 0)
-        c = costs_map.get(o.get("sku"))
+        c = resolve_cost(o.get("sku"), costs_map)
         if c:
             cogs += to_eur((c["cost_per_unit"] + c.get("shipping_cost", 0)) * qty, c.get("currency", "EUR"), rates)
         operational_total += op_cost * qty
@@ -541,15 +542,15 @@ async def top_skus(
             for mk, order_ids in d["orders_by_mk"].items()
         )
 
-    skus_needed = list(per_sku.keys())
+    # Load ALL cost rows so resolve_cost() can prefix-fallback from variant → group.
     costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find(
-        {"sku": {"$in": skus_needed}},
+        {},
         {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1},
     )}
 
     out = []
     for sku_id, d in per_sku.items():
-        c = costs_map.get(sku_id)
+        c = resolve_cost(sku_id, costs_map)
         units = d["units"]
         cogs = 0.0
         if c:
@@ -658,8 +659,8 @@ async def profit_loss(
 ):
     match = build_match(date_from, date_to, parse_list(marketplaces), sku, stock_only=stock_only)
     rates = await get_rates()
-    skus_in_scope = await db.orders.distinct("sku", match)
-    costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({"sku": {"$in": skus_in_scope}}, {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1})}
+    # Load ALL cost rows so resolve_cost() can prefix-fallback from variant → group.
+    costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({}, {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1})}
     pipeline = [
         {"$match": match} if match else {"$match": {}},
         {"$group": {
@@ -679,7 +680,7 @@ async def profit_loss(
     mk_vat = constants["vat_rate_by_marketplace"] or {}
     cogs_per_mk: Dict[str, float] = {}
     async for o in db.orders.find(match, {"sku": 1, "quantity": 1, "marketplace": 1, "currency": 1}):
-        c = costs_map.get(o.get("sku"))
+        c = resolve_cost(o.get("sku"), costs_map)
         if c:
             v = to_eur((c["cost_per_unit"] + c.get("shipping_cost", 0)) * o["quantity"], c.get("currency", "EUR"), rates)
             cogs_per_mk[o["marketplace"]] = cogs_per_mk.get(o["marketplace"], 0) + v

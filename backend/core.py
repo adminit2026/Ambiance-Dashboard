@@ -207,6 +207,30 @@ def to_eur(amount: float, currency: str, rates: Dict[str, float]) -> float:
     return amount * rates.get(c, 1.0)
 
 
+def resolve_cost(sku: str, costs_map: Dict[str, dict]) -> Optional[dict]:
+    """Look up a SKU's cost with variant→group prefix fallback.
+
+    Exact SKU match wins. Otherwise the SKU is split at every `_` boundary
+    from right to left and the longest prefix that has a cost entry is used.
+    This lets the user upload cost at group level (e.g. `roll-mono` €3.60)
+    and have every variant (`roll-mono_Bordeaux_60cmx1m`, …) inherit it
+    automatically, while variant-specific rows still take priority.
+    """
+    if not sku:
+        return None
+    exact = costs_map.get(sku)
+    if exact:
+        return exact
+    parts = sku.split("_")
+    # Try shorter and shorter joins until we find a match.
+    for n in range(len(parts) - 1, 0, -1):
+        candidate = "_".join(parts[:n])
+        c = costs_map.get(candidate)
+        if c:
+            return c
+    return None
+
+
 # ------------------- MARKETPLACE NORMALIZATION -------------------
 CANONICAL_MARKETPLACES = [
     "Amazon Vendor",

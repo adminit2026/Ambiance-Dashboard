@@ -10,7 +10,7 @@ from openpyxl import Workbook
 from core import (
     db, CANONICAL_MARKETPLACES,
     get_current_user, build_match, parse_list,
-    get_cost_constants,
+    get_cost_constants, resolve_cost,
 )
 
 router = APIRouter()
@@ -172,8 +172,8 @@ async def loss_makers(
         if not d["product_name"] and o.get("product_name"):
             d["product_name"] = o.get("product_name")
 
-    skus = list({k[0] for k in grouped.keys()})
-    costs_map = {c["sku"]: c async for c in db.costs.find({"sku": {"$in": skus}}, {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1})}
+    # Load ALL cost rows so resolve_cost() can prefix-fallback from variant → group.
+    costs_map = {c["sku"]: c async for c in db.costs.find({}, {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1})}
 
     out = []
     for (sku, mk), d in grouped.items():
@@ -182,7 +182,7 @@ async def loss_makers(
         if units == 0:
             continue
         avg_price = revenue / units
-        c = costs_map.get(sku, {})
+        c = resolve_cost(sku, costs_map) or {}
         prod_cost = float(c.get("cost_per_unit", 0))
         # Per-order shipping billed to this SKU on this mk = rate × distinct orders / units
         prod_ship_total = float(mk_shipping.get(mk, 0)) * len(d["orders"])
