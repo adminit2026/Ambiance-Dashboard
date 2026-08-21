@@ -132,6 +132,7 @@ async def loss_makers(
     date_to: Optional[str] = None,
     marketplaces: Optional[str] = None,
     target_margin_pct: float = 0.0,
+    stock_only: bool = False,
     user=Depends(get_current_user),
 ):
     """Return per-SKU per-marketplace combos where net profit/unit < 0.
@@ -147,7 +148,7 @@ async def loss_makers(
     → P = fixed_cost_per_unit / (1 − (commission_rate + target_margin_pct)/100)
     where fixed_cost_per_unit = production + operational + prod_shipping (per unit).
     """
-    match = build_match(date_from, date_to, parse_list(marketplaces), None)
+    match = build_match(date_from, date_to, parse_list(marketplaces), None, stock_only=stock_only)
     constants = await get_cost_constants()
     op_cost = float(constants["operational_cost_per_unit"])
     mk_shipping = constants["production_shipping_by_marketplace"] or {}
@@ -244,10 +245,11 @@ async def sku_prices(
     date_to: Optional[str] = None,
     marketplaces: Optional[str] = None,
     limit: int = 200,
+    stock_only: bool = False,
     user=Depends(get_current_user),
 ):
     """Returns per-SKU per-marketplace avg/min/max unit prices."""
-    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku, stock_only=stock_only)
     pipeline = [
         {"$match": match} if match else {"$match": {}},
         {"$match": {"unit_price": {"$gt": 0}}},

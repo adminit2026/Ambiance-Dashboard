@@ -176,7 +176,7 @@ def parse_list(q: Optional[str]) -> Optional[List[str]]:
     return [s.strip() for s in q.split(",") if s.strip()]
 
 
-def build_match(date_from: Optional[str], date_to: Optional[str], marketplaces: Optional[List[str]], sku: Optional[str]):
+def build_match(date_from: Optional[str], date_to: Optional[str], marketplaces: Optional[List[str]], sku: Optional[str], stock_only: bool = False):
     m: Dict[str, Any] = {}
     if date_from or date_to:
         m["order_date_iso"] = {}
@@ -186,9 +186,19 @@ def build_match(date_from: Optional[str], date_to: Optional[str], marketplaces: 
             m["order_date_iso"]["$lte"] = date_to + "T23:59:59"
     if marketplaces:
         m["marketplace"] = {"$in": marketplaces}
+    sku_conds: List[Dict[str, Any]] = []
     if sku:
         # Prefix match to be consistent with the frontend "SKU starts with" filter.
-        m["sku"] = {"$regex": "^" + re.escape(sku), "$options": "i"}
+        sku_conds.append({"sku": {"$regex": "^" + re.escape(sku), "$options": "i"}})
+    if stock_only:
+        # Same rule as Products page: keep SKUs starting with AMB-, J-, J3-, J4-, 3D-, carp-;
+        # explicitly exclude J3-privacy.
+        sku_conds.append({"sku": {"$regex": r"^(amb-|j-|j3-|j4-|3d-|carp-)", "$options": "i"}})
+        sku_conds.append({"sku": {"$not": {"$regex": r"^j3-privacy", "$options": "i"}}})
+    if len(sku_conds) == 1:
+        m.update(sku_conds[0])
+    elif len(sku_conds) > 1:
+        m["$and"] = sku_conds
     return m
 
 

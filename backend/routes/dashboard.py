@@ -19,9 +19,10 @@ async def dashboard_summary(
     date_to: Optional[str] = None,
     marketplaces: Optional[str] = None,
     sku: Optional[str] = None,
+    stock_only: bool = False,
     user=Depends(get_current_user),
 ):
-    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku, stock_only=stock_only)
     pipeline = [{"$match": match}] if match else []
     pipeline += [{
         "$group": {
@@ -120,6 +121,7 @@ async def dashboard_returns(
     date_to: Optional[str] = None,
     marketplaces: Optional[str] = None,
     sku: Optional[str] = None,
+    stock_only: bool = False,
     user=Depends(get_current_user),
 ):
     """Summary of refunded / returned / cancelled orders, broken down by marketplace.
@@ -127,7 +129,7 @@ async def dashboard_returns(
       - refund: status contains 'refund' or 'return'
       - cancel: status contains 'cancel'
     """
-    base_match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    base_match = build_match(date_from, date_to, parse_list(marketplaces), sku, stock_only=stock_only)
     match = {
         **base_match,
         "status": {"$regex": "refund|return|cancel|annul|rembours", "$options": "i"},
@@ -213,9 +215,10 @@ async def dashboard_trend(
     sku: Optional[str] = None,
     granularity: str = Query("day", pattern="^(day|month)$"),
     rollup: bool = False,
+    stock_only: bool = False,
     user=Depends(get_current_user),
 ):
-    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku, stock_only=stock_only)
     fmt = "%Y-%m-%d" if granularity == "day" else "%Y-%m"
     pipeline = [
         {"$match": {**match, "order_date_iso": {**match.get("order_date_iso", {}), "$ne": None}}},
@@ -256,9 +259,10 @@ async def marketplace_breakdown(
     marketplaces: Optional[str] = None,
     sku: Optional[str] = None,
     rollup: bool = False,
+    stock_only: bool = False,
     user=Depends(get_current_user),
 ):
-    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku, stock_only=stock_only)
     pipeline = [
         {"$match": match} if match else {"$match": {}},
         {"$group": {
@@ -317,12 +321,13 @@ async def marketplace_country_breakdown(
     date_to: Optional[str] = None,
     marketplaces: Optional[str] = None,
     sku: Optional[str] = None,
+    stock_only: bool = False,
     user=Depends(get_current_user),
 ):
     """Same breakdown as /dashboard/marketplace-breakdown but split per (marketplace, country).
     Useful for marketplaces that span multiple countries (e.g. Leroy Merlin → FR/ES/IT/PT/PL).
     """
-    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku, stock_only=stock_only)
     pipeline = [
         {"$match": match} if match else {"$match": {}},
         {"$group": {
@@ -457,6 +462,7 @@ async def top_skus(
     marketplaces: Optional[str] = None,
     sku: Optional[str] = None,
     sort_by: str = Query("revenue", pattern="^(revenue|units)$"),
+    stock_only: bool = False,
     user=Depends(get_current_user),
 ):
     """Per-SKU performance using the SAME cost formula as /dashboard/profit-loss so
@@ -476,11 +482,12 @@ async def top_skus(
     contain multiple SKUs — this is expected. The P&L stays at rate × distinct
     orders (the actual cash out).
     """
-    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku, stock_only=stock_only)
     constants = await get_cost_constants()
     op_cost = float(constants["operational_cost_per_unit"])
     mk_shipping = constants["production_shipping_by_marketplace"] or {}
     mk_commission = constants["commission_by_marketplace"] or {}
+    mk_vat = constants["vat_rate_by_marketplace"] or {}
     rates = await get_rates()
 
     # Production shipping is billed per ORDER. At the SKU level, we attribute
@@ -506,6 +513,7 @@ async def top_skus(
             "ship_income": 0.0,
             "operational": 0.0,
             "commission": 0.0,
+            "vat": 0.0,
         })
         qty = int(o.get("quantity") or 0)
         rev = float(o.get("line_total_eur") or 0)
@@ -518,6 +526,11 @@ async def top_skus(
         d["ship_income"] += ship
         d["operational"] += op_cost * qty
         d["commission"] += float(mk_commission.get(mk, 0)) / 100.0 * rev
+        # VAT per line = (line_rev + ship) × rate[mk] / 100. Aggregated across
+        # marketplaces this is exactly the same weighted VAT total as if we averaged
+        # the rate first — sum-then-average or per-line-then-sum are algebraically
+        # equal for a linear operator on Total Revenue.
+        d["vat"] += (rev + ship) * float(mk_vat.get(mk, 0)) / 100.0
         if not d["product_name"] and o.get("product_name"):
             d["product_name"] = o.get("product_name")
 
@@ -546,7 +559,10 @@ async def top_skus(
                 rates,
             )
         total_revenue = d["revenue"] + d["ship_income"]
-        deductions = cogs + d["operational"] + d["prod_shipping"] + d["commission"]
+        # Effective per-SKU VAT rate = accumulated VAT / total revenue (weighted avg
+        # across marketplaces where this SKU sold).
+        eff_vat_pct = (d["vat"] / total_revenue * 100.0) if total_revenue else 0.0
+        deductions = d["vat"] + cogs + d["operational"] + d["prod_shipping"] + d["commission"]
         margin = total_revenue - deductions
         margin_pct = (margin / total_revenue * 100) if total_revenue else 0
         out.append({
@@ -557,6 +573,8 @@ async def top_skus(
             "revenue_eur": round(d["revenue"], 2),
             "ship_income_eur": round(d["ship_income"], 2),
             "total_revenue_eur": round(total_revenue, 2),
+            "vat_eur": round(d["vat"], 2),
+            "vat_pct": round(eff_vat_pct, 2),
             "cogs_eur": round(cogs, 2),
             "operational_eur": round(d["operational"], 2),
             "production_shipping_eur": round(d["prod_shipping"], 2),
@@ -575,9 +593,10 @@ async def customers_analytics(
     date_to: Optional[str] = None,
     marketplaces: Optional[str] = None,
     sku: Optional[str] = None,
+    stock_only: bool = False,
     user=Depends(get_current_user),
 ):
-    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku, stock_only=stock_only)
     pipeline = [
         {"$match": match} if match else {"$match": {}},
         {"$group": {
@@ -603,9 +622,10 @@ async def heatmap(
     date_to: Optional[str] = None,
     marketplaces: Optional[str] = None,
     sku: Optional[str] = None,
+    stock_only: bool = False,
     user=Depends(get_current_user),
 ):
-    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku, stock_only=stock_only)
     pipeline = [
         {"$match": {**match, "order_date_iso": {"$ne": None}}},
         {"$addFields": {"order_dt": {"$dateFromString": {"dateString": "$order_date_iso", "onError": None}}}},
@@ -633,9 +653,10 @@ async def profit_loss(
     date_to: Optional[str] = None,
     marketplaces: Optional[str] = None,
     sku: Optional[str] = None,
+    stock_only: bool = False,
     user=Depends(get_current_user),
 ):
-    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku, stock_only=stock_only)
     rates = await get_rates()
     skus_in_scope = await db.orders.distinct("sku", match)
     costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find({"sku": {"$in": skus_in_scope}}, {"_id": 0, "sku": 1, "cost_per_unit": 1, "shipping_cost": 1, "currency": 1})}

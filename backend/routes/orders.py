@@ -21,9 +21,10 @@ async def list_orders(
     sku: Optional[str] = None,
     limit: int = 100,
     skip: int = 0,
+    stock_only: bool = False,
     user=Depends(get_current_user),
 ):
-    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku, stock_only=stock_only)
     cursor = db.orders.find(match, {"_id": 0}).sort("order_date_iso", -1).skip(skip).limit(min(limit, 500))
     docs = await cursor.to_list(min(limit, 500))
     total = await db.orders.count_documents(match)
@@ -36,9 +37,10 @@ async def export_orders(
     date_to: Optional[str] = None,
     marketplaces: Optional[str] = None,
     sku: Optional[str] = None,
+    stock_only: bool = False,
     user=Depends(get_current_user),
 ):
-    match = build_match(date_from, date_to, parse_list(marketplaces), sku)
+    match = build_match(date_from, date_to, parse_list(marketplaces), sku, stock_only=stock_only)
     fields = [
         "order_date_iso", "marketplace", "channel_raw", "order_id", "sku", "product_name",
         "quantity", "unit_price", "line_total", "currency", "line_total_eur",

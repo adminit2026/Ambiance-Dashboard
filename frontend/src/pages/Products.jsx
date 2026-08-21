@@ -4,23 +4,14 @@ import FiltersBar, { useFilters } from "@/components/FiltersBar";
 import api from "@/lib/api";
 import { fmtEur, fmtNum, fmtPct } from "@/lib/format";
 import { useT } from "@/lib/i18n";
-import { Filter, X, Download, Boxes } from "lucide-react";
+import { Filter, X, Download } from "lucide-react";
 import { toast } from "sonner";
 
-const NUM_COLS = ["units", "orders", "revenue_eur", "cogs_eur", "operational_eur", "production_shipping_eur", "commission_eur", "margin_eur", "margin_pct"];
+const NUM_COLS = ["units", "orders", "revenue_eur", "vat_eur", "cogs_eur", "operational_eur", "production_shipping_eur", "commission_eur", "margin_eur", "margin_pct"];
 const TEXT_COLS = ["sku", "product_name"];
 
-// "Stock items" preset — keeps only SKUs starting with any of these prefixes
-// (case-insensitive). J3-privacy is explicitly excluded even though J3- matches.
-const STOCK_PREFIXES = ["amb-", "j-", "j3-", "j4-", "3d-", "carp-"];
-const STOCK_EXCLUDE_PREFIXES = ["j3-privacy"];
-
-function isStockSku(sku) {
-  const s = String(sku || "").toLowerCase();
-  if (!STOCK_PREFIXES.some((p) => s.startsWith(p))) return false;
-  if (STOCK_EXCLUDE_PREFIXES.some((p) => s.startsWith(p))) return false;
-  return true;
-}
+// "Stock items" toggle is now global via FiltersBar (stock_only=true query param).
+// Backend applies the SKU prefix filter server-side so every page picks it up automatically.
 
 export default function Products() {
   const { t } = useT();
@@ -31,7 +22,6 @@ export default function Products() {
   const [sortKey, setSortKey] = useState("revenue_eur");
   const [sortDir, setSortDir] = useState("desc");
   const [openFilter, setOpenFilter] = useState(null);
-  const [stockOnly, setStockOnly] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -43,9 +33,6 @@ export default function Products() {
 
   const filtered = useMemo(() => {
     let result = rows;
-    if (stockOnly) {
-      result = result.filter((r) => isStockSku(r.sku));
-    }
     Object.entries(colFilters).forEach(([col, val]) => {
       if (!val) return;
       if (TEXT_COLS.includes(col)) {
@@ -73,7 +60,7 @@ export default function Products() {
       return sortDir === "asc" ? (av || 0) - (bv || 0) : (bv || 0) - (av || 0);
     });
     return result;
-  }, [rows, colFilters, sortKey, sortDir, stockOnly]);
+  }, [rows, colFilters, sortKey, sortDir]);
 
   const exportXlsx = async () => {
     if (filtered.length === 0) {
@@ -83,6 +70,7 @@ export default function Products() {
     const cols = [
       "sku", "product_name", "units", "orders",
       "revenue_eur", "ship_income_eur", "total_revenue_eur",
+      "vat_eur", "vat_pct",
       "cogs_eur", "operational_eur", "production_shipping_eur", "commission_eur",
       "margin_eur", "margin_pct",
     ];
@@ -190,18 +178,6 @@ export default function Products() {
             )}
           </div>
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setStockOnly((v) => !v)}
-              className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded border transition-colors ${
-                stockOnly
-                  ? "bg-[#0055FF] text-white border-transparent"
-                  : "bg-white text-[#111215] border-[#D5D7DC] hover:border-[#0055FF] hover:text-[#0055FF]"
-              }`}
-              data-testid="products-stock-only"
-              title="Show only stock items — SKUs starting with AMB-, J-, J3-, J4-, 3D-, carp- (excludes J3-privacy)"
-            >
-              <Boxes size={13} strokeWidth={2} /> Stock items{stockOnly ? " · ON" : ""}
-            </button>
             {activeFilterCount > 0 && (
               <button onClick={clearAll} className="inline-flex items-center gap-1 text-xs hover:text-[#FF2A2A] transition-colors" data-testid="clear-all-filters">
                 <X size={12} /> {t("products.clear")}
@@ -227,6 +203,7 @@ export default function Products() {
                 <Col col="units" label={t("products.col_units")} type="num" align="right" />
                 <Col col="orders" label={t("products.col_orders")} type="num" align="right" />
                 <Col col="revenue_eur" label={t("products.col_revenue")} type="num" align="right" />
+                <Col col="vat_eur" label="VAT" type="num" align="right" />
                 <Col col="cogs_eur" label={t("products.col_cogs")} type="num" align="right" />
                 <Col col="operational_eur" label="Op" type="num" align="right" />
                 <Col col="production_shipping_eur" label="Ship" type="num" align="right" />
@@ -237,10 +214,10 @@ export default function Products() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={11} className="text-center text-[#5E636E] py-12">{t("common.loading")}</td></tr>
+                <tr><td colSpan={12} className="text-center text-[#5E636E] py-12">{t("common.loading")}</td></tr>
               )}
               {!loading && filtered.length === 0 && (
-                <tr><td colSpan={11} className="text-center text-[#5E636E] py-12">{t("products.empty")}</td></tr>
+                <tr><td colSpan={12} className="text-center text-[#5E636E] py-12">{t("products.empty")}</td></tr>
               )}
               {!loading && filtered.map((r) => (
                 <tr key={r.sku} data-testid={`product-row-${r.sku}`}>
@@ -249,6 +226,7 @@ export default function Products() {
                   <td className="text-right font-mono-num">{fmtNum(r.units)}</td>
                   <td className="text-right font-mono-num">{fmtNum(r.orders)}</td>
                   <td className="text-right font-mono-num">{fmtEur(r.revenue_eur)}</td>
+                  <td className="text-right font-mono-num text-[#5E636E]" title={r.vat_pct ? `${r.vat_pct}% avg — from Settings` : "No VAT rate set for this SKU's marketplaces"}>{fmtEur(r.vat_eur || 0)}</td>
                   <td className="text-right font-mono-num text-[#5E636E]" title={r.has_cost ? "" : "Upload production cost for this SKU in Uploads"}>
                     {fmtEur(r.cogs_eur || 0)}
                     {!r.has_cost && <span className="ml-1 text-[#FF9900] font-bold" title="No production cost uploaded — COGS treated as €0">⚠</span>}

@@ -55,9 +55,13 @@ export function useFilters(initial = {}) {
     date_to: initial.date_to || isoDate(today),
     marketplaces: initial.marketplaces || "",
     sku: initial.sku || "",
+    stock_only: initial.stock_only ?? false,
   });
   const params = {};
-  Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v; });
+  Object.entries(filters).forEach(([k, v]) => {
+    if (k === "stock_only") { if (v) params[k] = "true"; return; }
+    if (v) params[k] = v;
+  });
   return { filters, setFilters, params };
 }
 
@@ -145,7 +149,28 @@ export default function FiltersBar({ filters, setFilters, showSku = true, rightS
           </div>
         )}
         <div className="flex flex-col">
-          <label className="eyebrow mb-1">{t("filters.marketplaces") || "Marketplaces"}</label>
+          <div className="flex items-center gap-3 mb-1">
+            <label className="eyebrow">{t("filters.marketplaces") || "Marketplaces"}</label>
+            <div className="flex gap-1.5">
+              <button
+                type="button"
+                data-testid="filter-mk-select-all"
+                onClick={() => setFilters({ ...filters, marketplaces: marketplaces.join(",") })}
+                className="text-[10px] uppercase tracking-wider text-[#0055FF] hover:underline"
+              >
+                Select all
+              </button>
+              <span className="text-[10px] text-[#5E636E]">·</span>
+              <button
+                type="button"
+                data-testid="filter-mk-clear-all"
+                onClick={() => setFilters({ ...filters, marketplaces: "" })}
+                className="text-[10px] uppercase tracking-wider text-[#5E636E] hover:underline"
+              >
+                Deselect all
+              </button>
+            </div>
+          </div>
           <div className="flex flex-wrap gap-1.5" data-testid="filter-marketplaces">
             {marketplaces.length === 0 && (
               <span className="text-xs text-[#5E636E]">Upload orders to populate</span>
@@ -165,6 +190,19 @@ export default function FiltersBar({ filters, setFilters, showSku = true, rightS
               );
             })}
           </div>
+        </div>
+        <div className="flex flex-col">
+          <label className="eyebrow mb-1">Stock</label>
+          <button
+            type="button"
+            data-testid="filter-stock-only"
+            onClick={() => setFilters({ ...filters, stock_only: !filters.stock_only })}
+            className={`pill transition-colors`}
+            style={filters.stock_only ? { background: "#00A859", color: "white", borderColor: "transparent" } : {}}
+            title="Show only stock items — SKUs starting with AMB-, J-, J3-, J4-, 3D-, carp- (excludes J3-privacy)"
+          >
+            {filters.stock_only ? "✓ Stock items only" : "Stock items"}
+          </button>
         </div>
         <div className="flex-1" />
         {rightSlot}
