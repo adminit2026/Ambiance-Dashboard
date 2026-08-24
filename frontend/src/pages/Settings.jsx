@@ -14,7 +14,7 @@ export default function Settings() {
   const [busy, setBusy] = useState(false);
   const [manual, setManual] = useState({ sku: "", cost_per_unit: "", shipping_cost: "", currency: "EUR" });
   const [marketplaces, setMarketplaces] = useState([]);
-  const [constants, setConstants] = useState({ operational_cost_per_unit: 0.5, production_shipping_by_marketplace: {}, commission_by_marketplace: {}, vat_rate_by_marketplace: {} });
+  const [constants, setConstants] = useState({ operational_cost_per_unit: 1.0, production_shipping_by_marketplace: {}, commission_by_marketplace: {}, vat_rate_by_marketplace: {} });
   const bulkInputRef = useRef(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [lastCostUpload, setLastCostUpload] = useState(null);
@@ -30,7 +30,7 @@ export default function Settings() {
     });
   const loadMks = () => api.get("/marketplaces").then((r) => setMarketplaces(r.data));
   const loadConstants = () => api.get("/cost-constants").then((r) => setConstants({
-    operational_cost_per_unit: r.data.operational_cost_per_unit ?? 0.5,
+    operational_cost_per_unit: r.data.operational_cost_per_unit ?? 1.0,
     production_shipping_by_marketplace: r.data.production_shipping_by_marketplace || {},
     commission_by_marketplace: r.data.commission_by_marketplace || {},
     vat_rate_by_marketplace: r.data.vat_rate_by_marketplace || {},
@@ -260,7 +260,7 @@ export default function Settings() {
               onChange={(e) => setConstants({ ...constants, operational_cost_per_unit: e.target.value })}
               data-testid="op-cost-input"
             />
-            <span className="text-xs text-[#5E636E] ml-3">per unit, applied to every product</span>
+            <span className="text-xs text-[#5E636E] ml-3">per order, applied to every order across marketplaces</span>
           </div>
 
           <label className="eyebrow block mb-2">{t("settings.prod_shipping_mk")}</label>

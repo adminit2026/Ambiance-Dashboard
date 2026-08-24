@@ -91,21 +91,24 @@ async def library_skus(
         production_cost = float(c.get("cost_per_unit", 0)) if c else 0
         units_total = sd.get("units_total", 0)
         revenue_total = sd.get("revenue_total", 0.0)
-        # Total per-order shipping billed to this SKU = sum over mk of rate × distinct orders
+        # Total per-order shipping AND operational, billed to this SKU by
+        # (rate × distinct orders on each marketplace), then averaged per unit.
         prod_ship_total = sum(
             float(mk_shipping.get(mk, 0)) * len(order_ids)
             for mk, order_ids in sd.get("orders_by_mk", {}).items()
         )
+        op_total = op_cost * sum(len(oids) for oids in sd.get("orders_by_mk", {}).values())
         commission_eur = sd.get("commission_eur", 0.0)
         prod_shipping = (prod_ship_total / units_total) if units_total > 0 else 0.0
+        op_per_unit = (op_total / units_total) if units_total > 0 else 0.0
         commission_pct_weighted = (commission_eur / revenue_total * 100.0) if revenue_total > 0 else 0.0
         product_name = sd.get("product_name") or c.get("product_name") or ""
-        total = production_cost + op_cost + prod_shipping
+        total = production_cost + op_per_unit + prod_shipping
         out.append({
             "sku": sku,
             "product_name": product_name,
             "production_cost": round(production_cost, 4),
-            "operational_cost": round(op_cost, 4),
+            "operational_cost": round(op_per_unit, 4),
             "production_shipping_cost": round(prod_shipping, 4),
             "commission_pct": round(commission_pct_weighted, 2),
             "commission_eur_per_unit": round(commission_eur / units_total, 4) if units_total else 0,
@@ -187,13 +190,16 @@ async def loss_makers(
         # Per-order shipping billed to this SKU on this mk = rate × distinct orders / units
         prod_ship_total = float(mk_shipping.get(mk, 0)) * len(d["orders"])
         prod_ship_per_unit = prod_ship_total / units
+        # Operational cost is also PER ORDER — same allocation as shipping.
+        op_total = op_cost * len(d["orders"])
+        op_per_unit = op_total / units
         commission_per_unit = avg_price * float(mk_commission.get(mk, 0)) / 100.0
-        total_cost_per_unit = prod_cost + op_cost + prod_ship_per_unit + commission_per_unit
+        total_cost_per_unit = prod_cost + op_per_unit + prod_ship_per_unit + commission_per_unit
         net_per_unit = avg_price - total_cost_per_unit
         if net_per_unit < 0 and prod_cost > 0:
             total_loss = net_per_unit * units
             # Suggested price: solve so remaining margin >= target_margin_pct of price
-            fixed_cost_per_unit = prod_cost + op_cost + prod_ship_per_unit
+            fixed_cost_per_unit = prod_cost + op_per_unit + prod_ship_per_unit
             commission_rate = float(mk_commission.get(mk, 0))
             denom = 1.0 - (commission_rate + target_margin_pct) / 100.0
             suggested_price = (fixed_cost_per_unit / denom) if denom > 0 else 0.0
@@ -206,7 +212,7 @@ async def loss_makers(
                 "orders": len(d["orders"]),
                 "avg_unit_price": round(avg_price, 2),
                 "production_cost": round(prod_cost, 2),
-                "operational_cost": round(op_cost, 2),
+                "operational_cost": round(op_per_unit, 2),
                 "production_shipping": round(prod_ship_per_unit, 2),
                 "commission_per_unit": round(commission_per_unit, 2),
                 "total_cost_per_unit": round(total_cost_per_unit, 2),
