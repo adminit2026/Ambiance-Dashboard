@@ -77,6 +77,7 @@ export default function Products() {
     const header = [
       "SKU", "Product", "Units", "Orders",
       "Revenue (EUR)", "Customer Shipping (EUR)", "Total Revenue (EUR)",
+      "VAT (EUR)", "VAT %",
       "COGS (EUR)", "Operational (EUR)", "Production Shipping (EUR)", "Commission (EUR)",
       "Net Margin (EUR)", "Margin %",
     ];
@@ -84,7 +85,13 @@ export default function Products() {
     const data = [header, ...filtered.map((r) => cols.map((c) => (r[c] === undefined || r[c] === null ? "" : r[c])))];
     const ws = XLSX.utils.aoa_to_sheet(data);
     // Widen product-name column so it's readable when opened
-    ws["!cols"] = [{ wch: 24 }, { wch: 40 }, { wch: 8 }, { wch: 8 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 10 }];
+    ws["!cols"] = [
+      { wch: 24 }, { wch: 40 }, { wch: 8 }, { wch: 8 },
+      { wch: 14 }, { wch: 18 }, { wch: 16 },
+      { wch: 12 }, { wch: 8 },
+      { wch: 12 }, { wch: 14 }, { wch: 22 }, { wch: 14 },
+      { wch: 14 }, { wch: 10 },
+    ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Product Performance");
     const stamp = new Date().toISOString().slice(0, 10);
@@ -107,7 +114,7 @@ export default function Products() {
     const isOpen = openFilter === col;
     return (
       <th className={align === "right" ? "text-right relative" : "relative"}>
-        <div className={`inline-flex items-center gap-1 ${align === "right" ? "ml-auto" : ""}`}>
+        <div className={`flex items-center gap-1 ${align === "right" ? "justify-end" : ""}`}>
           <button onClick={() => toggleSort(col)} className="hover:text-[#111215] transition-colors" data-testid={`sort-${col}`}>
             {label}
             {sortKey === col && <span className="text-[#0055FF] ml-1">{sortDir === "asc" ? "▲" : "▼"}</span>}
