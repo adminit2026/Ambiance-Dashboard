@@ -176,6 +176,14 @@ def parse_list(q: Optional[str]) -> Optional[List[str]]:
     return [s.strip() for s in q.split(",") if s.strip()]
 
 
+# SKU exclusion rules — applied to all revenue/margin math.
+# EXCLUDED_SKUS: dropped entirely from every endpoint (revenue, margin, dashboard, P&L).
+# ADDON_SKUS:    included in revenue/COGS but never trigger a per-order operational
+#                cost or production shipping (they piggyback on a real order).
+EXCLUDED_SKUS: set = {"PORT"}
+ADDON_SKUS: set = {"AMB-raclette", "AMB-rack"}
+
+
 def build_match(date_from: Optional[str], date_to: Optional[str], marketplaces: Optional[List[str]], sku: Optional[str], stock_only: bool = False):
     m: Dict[str, Any] = {}
     if date_from or date_to:
@@ -195,6 +203,9 @@ def build_match(date_from: Optional[str], date_to: Optional[str], marketplaces: 
         # explicitly exclude J3-privacy.
         sku_conds.append({"sku": {"$regex": r"^(amb-|j-|j3-|j4-|3d-|carp-)", "$options": "i"}})
         sku_conds.append({"sku": {"$not": {"$regex": r"^j3-privacy", "$options": "i"}}})
+    # Always drop EXCLUDED_SKUS (e.g. PORT) from every downstream calc.
+    if EXCLUDED_SKUS:
+        sku_conds.append({"sku": {"$nin": list(EXCLUDED_SKUS)}})
     if len(sku_conds) == 1:
         m.update(sku_conds[0])
     elif len(sku_conds) > 1:

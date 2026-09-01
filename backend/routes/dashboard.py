@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from core import (
     db, get_current_user, build_match, parse_list,
     get_rates, get_cost_constants, to_eur, resolve_cost,
-    rollup_marketplace,
+    rollup_marketplace, ADDON_SKUS,
 )
 
 router = APIRouter()
@@ -80,9 +80,16 @@ async def dashboard_summary(
             total_rev_mk = float(row.get("rev") or 0) + float(row.get("ship") or 0)
             vat_total += total_rev_mk * rate / 100.0
     # Production shipping AND operational cost are billed PER ORDER. Count distinct
-    # orders per marketplace once and multiply both totals.
+    # orders per marketplace once and multiply both totals. Exclude ADDON_SKUS
+    # (e.g. AMB-raclette, AMB-rack) from the pipeline — they piggyback on a real
+    # order and shouldn't trigger their own shipping or operational cost. Also keep
+    # any EXCLUDED_SKUS (e.g. PORT) filter that build_match already added.
+    from core import EXCLUDED_SKUS
+    exclude_all = list(EXCLUDED_SKUS | ADDON_SKUS)
+    orders_per_mk_match = dict(match)
+    orders_per_mk_match["sku"] = {"$nin": exclude_all}
     orders_per_mk_pipe = [
-        {"$match": match} if match else {"$match": {}},
+        {"$match": orders_per_mk_match},
         {"$group": {"_id": {"mk": "$marketplace", "oid": "$order_id"}}},
         {"$group": {"_id": "$_id.mk", "orders": {"$sum": 1}}},
     ]
@@ -535,12 +542,17 @@ async def top_skus(
 
     # Per-order shipping AND operational cost per SKU:
     #   rate × distinct orders (containing this SKU) across marketplaces.
-    for d in per_sku.values():
-        d["prod_shipping"] = sum(
-            float(mk_shipping.get(mk, 0)) * len(order_ids)
-            for mk, order_ids in d["orders_by_mk"].items()
-        )
-        d["operational"] = op_cost * sum(len(oids) for oids in d["orders_by_mk"].values())
+    # ADDON_SKUS (e.g. AMB-raclette) piggyback on real orders — no shipping/op charge.
+    for sku_id, d in per_sku.items():
+        if sku_id in ADDON_SKUS:
+            d["prod_shipping"] = 0.0
+            d["operational"] = 0.0
+        else:
+            d["prod_shipping"] = sum(
+                float(mk_shipping.get(mk, 0)) * len(order_ids)
+                for mk, order_ids in d["orders_by_mk"].items()
+            )
+            d["operational"] = op_cost * sum(len(oids) for oids in d["orders_by_mk"].values())
 
     # Load ALL cost rows so resolve_cost() can prefix-fallback from variant → group.
     costs_map: Dict[str, dict] = {c["sku"]: c async for c in db.costs.find(
@@ -669,7 +681,9 @@ async def profit_loss(
             "shipping": {"$sum": "$shipping_cost_eur"},
             "vat": {"$sum": "$vat"},
             "units": {"$sum": "$quantity"},
-            "orders": {"$addToSet": "$order_id"},
+            # Only orders that contain non-addon lines should count toward
+            # per-order operational + production-shipping charges.
+            "orders": {"$addToSet": {"$cond": [{"$in": ["$sku", list(ADDON_SKUS)]}, "$$REMOVE", "$order_id"]}},
         }},
     ]
     base = await db.orders.aggregate(pipeline).to_list(100)

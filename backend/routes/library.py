@@ -10,7 +10,7 @@ from openpyxl import Workbook
 from core import (
     db, CANONICAL_MARKETPLACES,
     get_current_user, build_match, parse_list,
-    get_cost_constants, resolve_cost,
+    get_cost_constants, resolve_cost, ADDON_SKUS,
 )
 
 router = APIRouter()
@@ -93,11 +93,16 @@ async def library_skus(
         revenue_total = sd.get("revenue_total", 0.0)
         # Total per-order shipping AND operational, billed to this SKU by
         # (rate × distinct orders on each marketplace), then averaged per unit.
-        prod_ship_total = sum(
-            float(mk_shipping.get(mk, 0)) * len(order_ids)
-            for mk, order_ids in sd.get("orders_by_mk", {}).items()
-        )
-        op_total = op_cost * sum(len(oids) for oids in sd.get("orders_by_mk", {}).values())
+        # Add-on SKUs are zeroed — they piggyback on real orders.
+        if sku in ADDON_SKUS:
+            prod_ship_total = 0.0
+            op_total = 0.0
+        else:
+            prod_ship_total = sum(
+                float(mk_shipping.get(mk, 0)) * len(order_ids)
+                for mk, order_ids in sd.get("orders_by_mk", {}).items()
+            )
+            op_total = op_cost * sum(len(oids) for oids in sd.get("orders_by_mk", {}).values())
         commission_eur = sd.get("commission_eur", 0.0)
         prod_shipping = (prod_ship_total / units_total) if units_total > 0 else 0.0
         op_per_unit = (op_total / units_total) if units_total > 0 else 0.0
@@ -188,10 +193,11 @@ async def loss_makers(
         c = resolve_cost(sku, costs_map) or {}
         prod_cost = float(c.get("cost_per_unit", 0))
         # Per-order shipping billed to this SKU on this mk = rate × distinct orders / units
-        prod_ship_total = float(mk_shipping.get(mk, 0)) * len(d["orders"])
+        # ADDON_SKUs (AMB-raclette, AMB-rack) are add-ons — no shipping/op charge.
+        is_addon = sku in ADDON_SKUS
+        prod_ship_total = 0.0 if is_addon else float(mk_shipping.get(mk, 0)) * len(d["orders"])
         prod_ship_per_unit = prod_ship_total / units
-        # Operational cost is also PER ORDER — same allocation as shipping.
-        op_total = op_cost * len(d["orders"])
+        op_total = 0.0 if is_addon else op_cost * len(d["orders"])
         op_per_unit = op_total / units
         commission_per_unit = avg_price * float(mk_commission.get(mk, 0)) / 100.0
         total_cost_per_unit = prod_cost + op_per_unit + prod_ship_per_unit + commission_per_unit
