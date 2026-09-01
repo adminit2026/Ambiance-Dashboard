@@ -60,7 +60,8 @@ table.dense th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.0
 table.dense td { padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--ink); }
 table.dense tr:hover td { background: #FAFAFB; }
 table.dense.products-tight { table-layout: fixed; }
-table.dense.products-tight th, table.dense.products-tight td { padding: 6px 6px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+table.dense.products-tight td { padding: 6px 6px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+table.dense.products-tight th { padding: 6px 6px; font-size: 11px; white-space: nowrap; overflow: visible; }
 table.dense.products-tight th { font-size: 9.5px; letter-spacing: 0.04em; }
 
 /* Recharts tweaks */

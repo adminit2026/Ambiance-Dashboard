@@ -1,0 +1,53 @@
+{
+  "summary": "Iteration 13 - verification of (a) Products.jsx renderCol() focus fix, (b) new LossMakers column filter/sort/visibility, (c) loss-makers margin formula sync with top-skus. Preview Mongo had 0 orders, so I seeded 6 TEST_ order lines (marker `_test_seed`, synthetic marketplaces TEST_MK/TEST_MK2 with VAT 20%/21%) via /app/backend/tests/seed_test_data.py to make the pages/endpoints assertable, then removed them. BACKEND: 13 passed / 1 failed / 3 skipped (skips = post-cleanup empty DB). Loss-makers returns 200 with all 5 new fields (vat_per_unit, vat_pct, ship_income_eur, total_revenue_eur, margin_pct); total_revenue_eur == revenue_eur + ship_income_eur; margin reconciliation with /dashboard/top-skus is EXACT for all 5 seeded loss-maker rows (e.g. roll-mono: net -4.20 EUR / -84.00% on both endpoints; col-roll-mat -19.00 / -140.74%). Empty DB returns 200 [] with no exception. summary / top-skus / profit-loss / library/skus regressions all 200. FRONTEND: focus-retention root-cause fix CONFIRMED on both pages - typing '-5' char-by-char keeps document.activeElement on the same input on Products (filter-max-margin_eur) and LossMakers (loss-filter-max-total_loss_eur), and text filter (filter-input-sku, 5 keystrokes 'col-f') keeps focus. Numeric filter now APPLIES (6->3 with max=-5, 6->5 with max=0 i.e. max=\"0\" honored), '1 filters active' pill renders, clear-all restores rows. LossMakers: 16 columns, 16 filter icons, popover visible+clickable, filters apply (5->3), column picker lists 16 items, unchecking Product removes the column (16->15 th, label 'Columns (15/16)') and re-checking restores it, SKU + Marketplace checkboxes disabled, +VAT and Margin % columns present, sort on Net/unit works. Read-only user (info@) can access /loss-makers, use the column picker and filters (Settings nav correctly hidden). ONE REAL NEW BUG FOUND: the Products page filter popover is clipped by CSS `overflow:hidden` on `table.dense.products-tight th` (App.css:63) - the popover is cut off ~48px below the header cell, so Clear and Close are invisible and NOT clickable with a normal mouse click (Playwright normal click times out; elementFromPoint at the Clear button returns a TD; force=True is required). LossMakers is unaffected (its th overflow is visible).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/login", "issue": "No brute-force protection: 6 consecutive wrong passwords all return 401 and the account is never locked/throttled (playbook expects lockout or 429 after 5 fails). No attempt counter in routes/auth.py."},
+      {"endpoint": "GET /api/library/loss-makers", "issue": "Reconciliation caveat: loss-makers filters lines with unit_price > 0 while /dashboard/top-skus does not, and loss-makers is per (sku, marketplace) while top-skus aggregates all marketplaces. Margins will therefore only match top-skus when the SKU sells on one marketplace and has no zero-price lines. Consider documenting this in the UI or aligning the unit_price filter."},
+      {"endpoint": "POST /api/auth/login", "issue": "access_token cookie is HttpOnly but set with samesite='lax' and no secure=True; fine for same-origin ingress use but will be dropped in any cross-site embed."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Products.jsx column filter popover",
+        "issue": "Popover is clipped and its footer is unclickable. `table.dense.products-tight th, td { overflow: hidden }` (App.css line 63) clips the absolutely-positioned popover to the header cell: measured popBottom=547 vs thBottom=498.5 (48.5px cut off). Result: the min/max inputs render squashed on top of the column label and the Clear/Close buttons cannot be clicked with a normal click (30s Playwright timeout; document.elementFromPoint over the Clear button returns a <td>). Users must press Escape or use 'Clear all filters' as a workaround. Fix: add `table.dense.products-tight th { overflow: visible }` (keep overflow:hidden/ellipsis on td only), or render the popover in a portal.",
+        "selector": "[data-testid=\"filter-popover-margin_eur\"] / [data-testid=\"filter-clear-margin_eur\"] / [data-testid=\"filter-close-margin_eur\"]",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Products + Loss Makers filter bar", "issues": ["Pill text is always plural: shows '1 filters active' instead of '1 filter active'."]},
+      {"screen": "Loss Makers table", "issues": ["Open filter popover overlays the first two data rows (expected for a popover, but on the last columns it also pushes past the card edge on narrower viewports)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration13.py",
+    "/app/backend/tests/seed_test_data.py",
+    "/app/test_reports/pytest/iteration13.xml"
+  ],
+  "action_items": [
+    "HIGH: Un-clip the Products page filter popover - set `overflow: visible` on `table.dense.products-tight th` in /app/frontend/src/App.css (line 63) keeping ellipsis on td, or portal the popover. Currently Clear/Close inside the popover are not clickable.",
+    "MEDIUM: Add login brute-force protection (attempt counter + lockout/429 after 5 failures) in /app/backend/routes/auth.py.",
+    "LOW: Fix '1 filters active' pluralisation on Products.jsx and LossMakers.jsx.",
+    "LOW (optional): Align the unit_price>0 line filter between loss_makers and top_skus so per-SKU margins reconcile even with zero-price lines."
+  ],
+  "critical_code_review_comments": [
+    "renderCol()/renderCell() render-function pattern is correct and verified - do not reintroduce an inline <Col/> component in either page.",
+    "Products.jsx and LossMakers.jsx now duplicate ~80 lines of identical filter/sort/popover logic; extract a shared <ColumnHeader> component + useColumnFilters hook to avoid the two implementations drifting (the overflow bug exists in only one of them precisely because of this duplication).",
+    "loss_makers uses `resolve_cost(...) or {}` then float(get('cost_per_unit',0)); a SKU with a cost record of 0 is silently skipped by the `prod_cost > 0` gate - intended, but worth a comment since such SKUs never appear as loss-makers even when clearly unprofitable."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration13.py (new)",
+    "/app/backend/tests/seed_test_data.py (new)"
+  ],
+  "success_rate": {"backend": "93% (13/14 executed assertions passing; only the brute-force-lockout playbook check fails)", "frontend": "90% (all filter/sort/column-visibility/focus behaviour works; Products popover Clear/Close unclickable)"},
+  "seed_data_creation": "6 order lines with `_test_seed: true` on marketplaces TEST_MK / TEST_MK2 (+ temporary VAT rates 20%/21% for those two marketplaces only) using /app/backend/tests/seed_test_data.py. ALL REMOVED at end of run (`python seed_test_data.py clean`); settings VAT map restored. DB is back to 0 orders / 2176 costs.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Admin amazon.marketplace@ambiance-sticker.com / Stickers2026! and user info@ambiance-sticker.com / Ambiance2026! - both work, password hash is $2b$, login sets HttpOnly access_token cookie, seed_admin is idempotent and refreshes the hash when the seeded password changes.",
+  "context_for_next_testing_agent": "Preview Mongo has 0 orders, so /products and /loss-makers are empty by default. Use `python /app/backend/tests/seed_test_data.py seed` to insert 6 TEST_ order lines (produces 5 loss-maker rows + 1 profitable SKU) and `... clean` to remove them - always clean up, it also restores the settings VAT map. Verified this iteration: focus retention on both pages, numeric max=0 honored, LossMakers column picker + locked SKU/Marketplace, loss-makers <-> top-skus margin reconciliation exact. Outstanding: Products popover clipped by App.css:63 overflow:hidden (retest by clicking [data-testid=\"filter-clear-margin_eur\"] WITHOUT force=True - it must succeed), and missing login brute-force lockout.",
+  "rca_of_the_issue": "(a) Original 'filter does not apply' bug: the inline <Col/> component gave the <th> a new element identity on every render, remounting the input and killing focus after the first keystroke - fixed by renderCol(); verified activeElement stays on the same data-testid across multiple keystrokes and that max=\"0\" is now honored (truthy check tightened). (b) LossMakers now has the same filter/sort plus a working 16-column visibility picker. (c) Margin mismatch fixed: loss_makers now adds shipping_cost_eur as income, deducts VAT (flat % per marketplace from Settings) and includes the cost record's shipping component with to_eur conversion - seeded data shows byte-identical margin_eur/margin_pct vs /dashboard/top-skus for every row. NEW residual defect: the Products popover is visually clipped and its footer buttons are pointer-unreachable because table.dense.products-tight th has overflow:hidden in App.css - a CSS-only fix."
+}

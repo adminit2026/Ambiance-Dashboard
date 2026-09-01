@@ -108,12 +108,19 @@ export default function Products() {
     else { setSortKey(col); setSortDir("desc"); }
   };
 
-  const Col = ({ col, label, align = "left", type = "text" }) => {
+  // NOTE: Do NOT define this as an inline React component (<Col ... />).
+  // Doing so gives it a new function identity every render, which causes React
+  // to fully unmount/remount the underlying <th> on every keystroke — killing
+  // focus and making the numeric filter unusable. Calling renderCol(...) instead
+  // returns plain JSX so reconciliation is stable.
+  const renderCol = (col, label, align = "left", type = "text") => {
     const f = colFilters[col];
-    const hasFilter = type === "text" ? !!f : f && (f.min || f.max);
+    const hasFilter = type === "text"
+      ? (typeof f === "string" && f !== "")
+      : !!(f && ((f.min !== undefined && f.min !== "") || (f.max !== undefined && f.max !== "")));
     const isOpen = openFilter === col;
     return (
-      <th className={align === "right" ? "text-right relative" : "relative"}>
+      <th key={col} className={align === "right" ? "text-right relative" : "relative"}>
         <div className={`flex items-center gap-1 ${align === "right" ? "justify-end" : ""}`}>
           <button onClick={() => toggleSort(col)} className="hover:text-[#111215] transition-colors" data-testid={`sort-${col}`}>
             {label}
@@ -128,14 +135,19 @@ export default function Products() {
           </button>
         </div>
         {isOpen && (
-          <div className="absolute top-full right-0 mt-1 surface p-3 z-30 min-w-[200px] shadow-lg" data-testid={`filter-popover-${col}`}>
+          <div
+            className="absolute top-full right-0 mt-1 surface p-3 z-30 min-w-[200px] shadow-lg"
+            data-testid={`filter-popover-${col}`}
+            onClick={(e) => e.stopPropagation()}
+          >
             {type === "text" ? (
               <input
                 autoFocus
                 className="in w-full text-sm"
                 placeholder={col === "sku" ? (t("products.filter_starts_with") || "starts with…") : (t("products.filter_text") || "contains…")}
-                value={f || ""}
+                value={typeof f === "string" ? f : ""}
                 onChange={(e) => setTextFilter(col, e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setOpenFilter(null); }}
                 data-testid={`filter-input-${col}`}
               />
             ) : (
@@ -143,18 +155,22 @@ export default function Products() {
                 <input
                   autoFocus
                   type="number"
+                  step="any"
                   className="in w-full text-sm"
                   placeholder={t("products.filter_min")}
-                  value={f?.min || ""}
+                  value={f?.min ?? ""}
                   onChange={(e) => setNumFilter(col, "min", e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setOpenFilter(null); }}
                   data-testid={`filter-min-${col}`}
                 />
                 <input
                   type="number"
+                  step="any"
                   className="in w-full text-sm"
                   placeholder={t("products.filter_max")}
-                  value={f?.max || ""}
+                  value={f?.max ?? ""}
                   onChange={(e) => setNumFilter(col, "max", e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setOpenFilter(null); }}
                   data-testid={`filter-max-${col}`}
                 />
               </div>
@@ -169,7 +185,10 @@ export default function Products() {
     );
   };
 
-  const activeFilterCount = Object.values(colFilters).filter((v) => (typeof v === "string" ? v : v && (v.min || v.max))).length;
+  const activeFilterCount = Object.values(colFilters).filter((v) => {
+    if (typeof v === "string") return v !== "";
+    return !!(v && ((v.min !== undefined && v.min !== "") || (v.max !== undefined && v.max !== "")));
+  }).length;
 
   return (
     <div>
@@ -181,7 +200,7 @@ export default function Products() {
           <div>
             <span className="font-mono-num text-[#111215]">{fmtNum(filtered.length)}</span> / <span className="font-mono-num">{fmtNum(rows.length)}</span> products
             {activeFilterCount > 0 && (
-              <span className="ml-3 pill" style={{ color: "#0055FF", background: "#E0EAFF", borderColor: "transparent" }}>{activeFilterCount} filters active</span>
+              <span className="ml-3 pill" style={{ color: "#0055FF", background: "#E0EAFF", borderColor: "transparent" }}>{activeFilterCount} {activeFilterCount === 1 ? "filter" : "filters"} active</span>
             )}
           </div>
           <div className="flex items-center gap-3">
@@ -205,18 +224,18 @@ export default function Products() {
           <table className="dense w-full text-xs products-tight" data-testid="products-table">
             <thead>
               <tr>
-                <Col col="sku" label={t("products.col_sku")} type="text" />
-                <Col col="product_name" label={t("products.col_product")} type="text" />
-                <Col col="units" label={t("products.col_units")} type="num" align="right" />
-                <Col col="orders" label={t("products.col_orders")} type="num" align="right" />
-                <Col col="revenue_eur" label={t("products.col_revenue")} type="num" align="right" />
-                <Col col="vat_eur" label="VAT" type="num" align="right" />
-                <Col col="cogs_eur" label={t("products.col_cogs")} type="num" align="right" />
-                <Col col="operational_eur" label="Op" type="num" align="right" />
-                <Col col="production_shipping_eur" label="Ship" type="num" align="right" />
-                <Col col="commission_eur" label="Comm" type="num" align="right" />
-                <Col col="margin_eur" label={t("products.col_margin")} type="num" align="right" />
-                <Col col="margin_pct" label="%" type="num" align="right" />
+                {renderCol("sku", t("products.col_sku"), "left", "text")}
+                {renderCol("product_name", t("products.col_product"), "left", "text")}
+                {renderCol("units", t("products.col_units"), "right", "num")}
+                {renderCol("orders", t("products.col_orders"), "right", "num")}
+                {renderCol("revenue_eur", t("products.col_revenue"), "right", "num")}
+                {renderCol("vat_eur", "VAT", "right", "num")}
+                {renderCol("cogs_eur", t("products.col_cogs"), "right", "num")}
+                {renderCol("operational_eur", "Op", "right", "num")}
+                {renderCol("production_shipping_eur", "Ship", "right", "num")}
+                {renderCol("commission_eur", "Comm", "right", "num")}
+                {renderCol("margin_eur", t("products.col_margin"), "right", "num")}
+                {renderCol("margin_pct", "%", "right", "num")}
               </tr>
             </thead>
             <tbody>

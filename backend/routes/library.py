@@ -10,7 +10,7 @@ from openpyxl import Workbook
 from core import (
     db, CANONICAL_MARKETPLACES,
     get_current_user, build_match, parse_list,
-    get_cost_constants, resolve_cost, ADDON_SKUS,
+    get_cost_constants, get_rates, to_eur, resolve_cost, ADDON_SKUS,
 )
 
 router = APIRouter()
@@ -145,37 +145,57 @@ async def loss_makers(
 ):
     """Return per-SKU per-marketplace combos where net profit/unit < 0.
 
-    Production shipping is billed PER ORDER. At the SKU×MK level we bill the
-    FULL per-order shipping cost to every SKU appearing in the order, then
-    average per unit for this (sku, mk) row.
+    The margin formula is the SAME one used by /dashboard/top-skus and
+    /dashboard/profit-loss so numbers reconcile line-by-line:
 
-    Net/unit = avg_unit_price − (production_cost + operational_cost + prod_ship_per_unit + avg_price × commission[mk]/100)
+        Total Revenue = line_total_eur + shipping_cost_eur (customer shipping = income)
+        VAT           = Total Revenue × rate[mk] / 100      (from Settings)
+        COGS          = (cost_per_unit + cost_shipping) × units × currency_conv
+        Operational   = op_cost_per_order × distinct_orders (0 if ADDON_SKU)
+        Prod Shipping = rate[mk] × distinct_orders          (0 if ADDON_SKU)
+        Commission    = rate[mk]/100 × line_total_eur       (on gross revenue)
+        Net Margin €  = Total Revenue − VAT − COGS − Op − Prod Ship − Commission
+        Margin %      = Net Margin € / Total Revenue × 100
 
-    Suggested price: solves for a new selling price P such that
-        P × (1 − commission_rate/100) − (production_cost + operational_cost + prod_ship_per_unit) ≥ P × target_margin_pct/100
-    → P = fixed_cost_per_unit / (1 − (commission_rate + target_margin_pct)/100)
-    where fixed_cost_per_unit = production + operational + prod_shipping (per unit).
+    All figures are then divided by units to get per-unit values (used as the
+    display grain on this page). Only rows where net_per_unit < 0 AND the SKU
+    has a valid production cost are returned.
+
+    Suggested price: solves for a new selling price P so that after commission,
+    VAT and fixed costs the seller keeps at least `target_margin_pct` of P.
     """
     match = build_match(date_from, date_to, parse_list(marketplaces), None, stock_only=stock_only)
     constants = await get_cost_constants()
     op_cost = float(constants["operational_cost_per_unit"])
     mk_shipping = constants["production_shipping_by_marketplace"] or {}
     mk_commission = constants["commission_by_marketplace"] or {}
+    mk_vat = constants["vat_rate_by_marketplace"] or {}
+    rates = await get_rates()
 
-    # Aggregate (sku, mk) — units, revenue, distinct orders (for per-order shipping)
+    # Aggregate (sku, mk) — units, revenue (gross line total), customer shipping
+    # income, distinct orders (used for per-order shipping + operational).
     grouped: Dict[tuple, dict] = {}
     line_match = {**match, "unit_price": {"$gt": 0}}
-    async for o in db.orders.find(line_match, {"sku": 1, "marketplace": 1, "quantity": 1, "line_total_eur": 1, "order_id": 1, "product_name": 1}):
+    async for o in db.orders.find(
+        line_match,
+        {"sku": 1, "marketplace": 1, "quantity": 1, "line_total_eur": 1,
+         "shipping_cost_eur": 1, "order_id": 1, "product_name": 1},
+    ):
         sku = o.get("sku")
         if not sku:
             continue
         mk = o.get("marketplace") or "Unknown"
         qty = int(o.get("quantity") or 0)
         rev = float(o.get("line_total_eur") or 0)
+        ship_in = float(o.get("shipping_cost_eur") or 0)
         key = (sku, mk)
-        d = grouped.setdefault(key, {"sku": sku, "mk": mk, "product_name": o.get("product_name") or "", "units": 0, "revenue": 0.0, "orders": set()})
+        d = grouped.setdefault(key, {
+            "sku": sku, "mk": mk, "product_name": o.get("product_name") or "",
+            "units": 0, "revenue": 0.0, "ship_income": 0.0, "orders": set(),
+        })
         d["units"] += qty
         d["revenue"] += rev
+        d["ship_income"] += ship_in
         d["orders"].add(o.get("order_id"))
         if not d["product_name"] and o.get("product_name"):
             d["product_name"] = o.get("product_name")
@@ -187,29 +207,43 @@ async def loss_makers(
     for (sku, mk), d in grouped.items():
         units = d["units"]
         revenue = d["revenue"]
+        ship_income = d["ship_income"]
         if units == 0:
             continue
-        avg_price = revenue / units
+        total_revenue = revenue + ship_income
+        avg_price = total_revenue / units  # total-revenue-per-unit (matches top-skus grain)
+
         c = resolve_cost(sku, costs_map) or {}
-        prod_cost = float(c.get("cost_per_unit", 0))
-        # Per-order shipping billed to this SKU on this mk = rate × distinct orders / units
-        # ADDON_SKUs (AMB-raclette, AMB-rack) are add-ons — no shipping/op charge.
+        # COGS matches top_skus: (cost_per_unit + shipping_cost) × units × currency conv.
+        prod_cost_unit_native = float(c.get("cost_per_unit", 0)) + float(c.get("shipping_cost", 0))
+        prod_cost_total_eur = to_eur(prod_cost_unit_native * units, c.get("currency", "EUR"), rates)
+        prod_cost = (prod_cost_total_eur / units) if units else 0.0
+
+        # Per-order shipping + operational — 0 for ADDON_SKUs (piggyback on real orders).
         is_addon = sku in ADDON_SKUS
         prod_ship_total = 0.0 if is_addon else float(mk_shipping.get(mk, 0)) * len(d["orders"])
         prod_ship_per_unit = prod_ship_total / units
         op_total = 0.0 if is_addon else op_cost * len(d["orders"])
         op_per_unit = op_total / units
-        commission_per_unit = avg_price * float(mk_commission.get(mk, 0)) / 100.0
-        total_cost_per_unit = prod_cost + op_per_unit + prod_ship_per_unit + commission_per_unit
+
+        commission_rate = float(mk_commission.get(mk, 0))
+        commission_per_unit = commission_rate / 100.0 * (revenue / units)  # gross-only, per top_skus
+
+        vat_rate = float(mk_vat.get(mk, 0))
+        vat_per_unit = avg_price * vat_rate / 100.0
+
+        total_cost_per_unit = prod_cost + op_per_unit + prod_ship_per_unit + commission_per_unit + vat_per_unit
         net_per_unit = avg_price - total_cost_per_unit
+
         if net_per_unit < 0 and prod_cost > 0:
             total_loss = net_per_unit * units
-            # Suggested price: solve so remaining margin >= target_margin_pct of price
+            # Suggested price: solve so seller keeps target_margin_pct of P after
+            # commission and VAT, once fixed per-unit costs are covered.
             fixed_cost_per_unit = prod_cost + op_per_unit + prod_ship_per_unit
-            commission_rate = float(mk_commission.get(mk, 0))
-            denom = 1.0 - (commission_rate + target_margin_pct) / 100.0
+            denom = 1.0 - (commission_rate + vat_rate + target_margin_pct) / 100.0
             suggested_price = (fixed_cost_per_unit / denom) if denom > 0 else 0.0
             uplift_pct = ((suggested_price - avg_price) / avg_price * 100.0) if avg_price > 0 else 0.0
+            margin_pct = (net_per_unit / avg_price * 100.0) if avg_price > 0 else 0.0
             out.append({
                 "sku": sku,
                 "marketplace": mk,
@@ -221,10 +255,15 @@ async def loss_makers(
                 "operational_cost": round(op_per_unit, 2),
                 "production_shipping": round(prod_ship_per_unit, 2),
                 "commission_per_unit": round(commission_per_unit, 2),
+                "vat_per_unit": round(vat_per_unit, 2),
+                "vat_pct": round(vat_rate, 2),
                 "total_cost_per_unit": round(total_cost_per_unit, 2),
                 "net_per_unit": round(net_per_unit, 2),
                 "total_loss_eur": round(total_loss, 2),
                 "revenue_eur": round(revenue, 2),
+                "ship_income_eur": round(ship_income, 2),
+                "total_revenue_eur": round(total_revenue, 2),
+                "margin_pct": round(margin_pct, 2),
                 "suggested_price_eur": round(suggested_price, 2),
                 "price_uplift_pct": round(uplift_pct, 1),
             })

@@ -72,5 +72,13 @@ CDiscount, Maison, Leroy Merlin, Mano Mano (was MONECHELLE), PinkConnect Veepee 
 2. Returns CSV export and Loss Makers CSV export.
 3. Amazon Delivery: per-week aggregation toggle + CSV export.
 
+### Iteration 7 (2026-02 fork)
+- **Numeric-filter root-cause fix** (Products.jsx): the inline `<Col/>` component was giving each `<th>` a new function identity on every render, so React remounted the input on every keystroke — killing focus and making the "Margin < 0" filter appear broken. Replaced with a stable `renderCol()` helper that returns JSX. Tightened `hasFilter` / `activeFilterCount` truthy checks so `max="0"` is honored, and added Enter/Escape keyboard close.
+- **CSS clipping fix**: `table.dense.products-tight th, td { overflow: hidden }` was clipping the absolutely-positioned filter popover so the Clear/Close footer was unreachable by mouse. Split into `td { overflow: hidden }` and `th { overflow: visible }` in `/app/frontend/src/App.css`.
+- **Loss-Makers column customization** (LossMakers.jsx): sortable + filterable per column (16 cols total), plus a "Columns (n/16)" visibility picker; SKU and Marketplace are locked. New columns exposed: +VAT (per unit) and Margin %. Reuses the same `renderCol()` render-function pattern to avoid the focus-remount issue.
+- **Margin math sync** (`/api/library/loss-makers` now matches `/api/dashboard/top-skus`): customer shipping added to revenue (as income), VAT deducted (flat % from Settings), COGS uses `cost_per_unit + shipping_cost` with `to_eur` currency conversion, `vat_per_unit / vat_pct / ship_income_eur / total_revenue_eur / margin_pct` added to the response, and the suggested-price formula now factors VAT rate.
+- **Pluralisation**: filters-active pill now shows "1 filter active" / "2 filters active".
+- Verified iter 13 by testing agent: focus retention, numeric max=0 honored, LossMakers column-picker + locked cols, byte-identical margin reconciliation with top_skus on seeded data.
+
 ## Credentials
 - admin@ambiancesticker.com / Ambiance2026!
